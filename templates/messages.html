@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Сообщения — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            <a class="back-link" href="{{ url_for('index') }}">К объявлениям</a>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-button">Выйти</button></form>
+        </div>
+    </div>
+</header>
+<main class="account-page">
+    <nav class="account-tabs" aria-label="Разделы кабинета">
+        <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
+        <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
+    </nav>
+    <section class="account-hero">
+        <p class="eyebrow">Личный кабинет</p>
+        <h1>Сообщения</h1>
+        <p>Переписка с продавцами и покупателями по вашим объявлениям.</p>
+    </section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="account-section">
+        <div class="account-list">
+            {% for dialog in dialogs %}
+            <a class="dialog-item" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id) }}">
+                <div class="dialog-avatar">
+                    {% if dialog.other_avatar %}
+                    <img src="{{ url_for('static', filename='uploads/' + dialog.other_avatar) }}" alt="">
+                    {% else %}
+                    <span>{{ dialog.other_name[:1]|upper }}</span>
+                    {% endif %}
+                </div>
+                <div class="dialog-body">
+                    <div class="dialog-topline">
+                        <strong>{{ dialog.other_name }}</strong>
+                        <span class="dialog-time">{{ dialog.last_time[:16].replace('T', ' ') }}</span>
+                    </div>
+                    <p class="dialog-listing">{{ dialog.title }}</p>
+                    <p class="dialog-preview">{{ dialog.last_message }}</p>
+                </div>
+                {% if dialog.unread %}<span class="dialog-unread">{{ dialog.unread }}</span>{% endif %}
+            </a>
+            {% else %}
+            <div class="empty-state"><div>💬</div><h3>Сообщений пока нет</h3><p>Напишите продавцу со страницы объявления, чтобы начать переписку.</p><a href="{{ url_for('index') }}">К объявлениям</a></div>
+            {% endfor %}
+        </div>
+    </section>
+</main>
+<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+</body>
+</html>

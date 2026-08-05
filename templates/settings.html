@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Настройки — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            <a class="back-link" href="{{ url_for('index') }}">К объявлениям</a>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-button">Выйти</button></form>
+        </div>
+    </div>
+</header>
+<main class="account-page">
+    <nav class="account-tabs" aria-label="Разделы кабинета">
+        <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
+        <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
+    </nav>
+    <section class="account-hero">
+        <p class="eyebrow">Личный кабинет</p>
+        <h1>Настройки клиента</h1>
+        <p>Управляйте данными профиля, контактами и параметрами аккаунта.</p>
+    </section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+
+    <section class="account-section settings-section">
+        <h2>Профиль</h2>
+        <div class="settings-card">
+            <form method="post" action="{{ url_for('settings_profile') }}" enctype="multipart/form-data" class="settings-form">
+                <div class="avatar-block">
+                    <div class="avatar-preview">
+                        {% if account_user.avatar %}
+                        <img src="{{ url_for('static', filename='uploads/' ~ account_user.avatar) }}" alt="Аватар">
+                        {% else %}
+                        <span class="avatar-placeholder">{{ account_user.name[:1]|upper }}</span>
+                        {% endif %}
+                    </div>
+                    <label class="file-label">Загрузить фото
+                        <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+                    </label>
+                </div>
+                <label>Имя<input name="name" value="{{ account_user.name }}" required minlength="2"></label>
+                <label>Город
+                    <input name="city" value="{{ account_user.city or '' }}" list="city-list" placeholder="Ваш город">
+                    <datalist id="city-list">
+                        {% for city in russian_cities %}<option value="{{ city }}">{% endfor %}
+                    </datalist>
+                </label>
+                <label>Пол
+                    <select name="gender">
+                        <option value="">Не указан</option>
+                        <option value="male" {% if account_user.gender == 'male' %}selected{% endif %}>Мужской</option>
+                        <option value="female" {% if account_user.gender == 'female' %}selected{% endif %}>Женский</option>
+                    </select>
+                </label>
+                <label>Дата рождения<input name="birth_date" type="date" value="{{ account_user.birth_date or '' }}"></label>
+                <label>Telegram<input name="telegram" value="{{ account_user.telegram or '' }}" placeholder="@username"></label>
+                <label class="full-row">О себе<textarea name="about" rows="3" placeholder="Расскажите немного о себе">{{ account_user.about or '' }}</textarea></label>
+                <button type="submit" class="settings-save">Сохранить профиль</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="account-section settings-section">
+        <h2>Контакты</h2>
+        <div class="settings-card settings-contacts">
+            <form method="post" action="{{ url_for('settings_email') }}" class="settings-inline-form">
+                <label>Email<input name="email" type="email" value="{{ account_user.email }}" required></label>
+                <button type="submit" class="settings-save">Обновить</button>
+            </form>
+            <form method="post" action="{{ url_for('settings_phone') }}" class="settings-inline-form">
+                <label>Телефон РФ<input name="phone" type="tel" value="{{ account_user.phone or '' }}" placeholder="+7 999 123-45-67" required></label>
+                <button type="submit" class="settings-save">Обновить</button>
+            </form>
+        </div>
+        <p class="muted settings-hint">Телефон используется для контактов в объявлениях, email — для входа в аккаунт.</p>
+    </section>
+
+    <section class="account-section settings-section">
+        <h2>Аккаунт</h2>
+        <div class="settings-card account-summary">
+            <p><strong>ID:</strong> #{{ account_user.id }}</p>
+            <p><strong>Баланс:</strong> {{ '{:,.0f}'.format(account_user.balance or 0).replace(',', ' ') }} ₽</p>
+            <form method="post" action="{{ url_for('topup') }}" class="topup-form">
+                <input type="number" name="amount" min="100" max="100000" step="100" placeholder="Сумма" required>
+                <button type="submit">Пополнить баланс</button>
+            </form>
+        </div>
+    </section>
+
+    <section class="account-section settings-section">
+        <h2>Опасная зона</h2>
+        <div class="settings-card danger-zone">
+            <p>Удаление аккаунта безвозвратно удалит профиль и все ваши объявления с фотографиями.</p>
+            <form method="post" action="{{ url_for('settings_delete') }}" onsubmit="return confirm('Вы уверены? Это действие нельзя отменить.');">
+                <button type="submit" class="danger-button">Удалить аккаунт</button>
+            </form>
+        </div>
+    </section>
+</main>
+<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+</body>
+</html>

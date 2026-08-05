@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Зоопитание и товары — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <nav class="header-nav">
+            <a href="{{ url_for('index') }}">Объявления</a>
+            <a href="{{ url_for('services_list') }}">Услуги</a>
+            <a href="{{ url_for('food_list') }}">Зоопитание</a>
+        </nav>
+        {% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}
+        <a class="publish-button" href="#food-publish" data-open-publish>+ Разместить товар</a>
+    </div>
+</header>
+<main>
+    <section class="hero">
+        <div class="hero-content">
+            <p class="eyebrow">Зоопитание и товары</p>
+            <h1>Корм, лакомства,<br>игрушки и не только</h1>
+            <p class="hero-copy">Всё для ваших питомцев: корма, наполнители, амуниция и аксессуары. Размещение бесплатно.</p>
+        </div>
+    </section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+
+    <section class="search-panel" aria-label="Поиск товаров">
+        <form method="get" class="search-form">
+            <label class="search-field"><span class="sr-only">Поиск</span><input type="search" name="q" value="{{ search }}" placeholder="Название товара или описание"></label>
+            <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
+            <select name="category" aria-label="Категория">
+                <option value="">Все категории</option>
+                {% for ft in food_types %}<option value="{{ ft }}" {% if selected_category == ft %}selected{% endif %}>{{ ft }}</option>{% endfor %}
+            </select>
+            <button type="submit">Найти</button>
+        </form>
+    </section>
+
+    <section id="food-publish" class="add-form-section publish-modal" aria-hidden="true" role="dialog" aria-modal="true">
+        <div class="modal-card">
+        <button class="modal-close" type="button" aria-label="Закрыть окно">×</button>
+        <div class="section-heading"><div><p class="eyebrow">Бесплатно</p><h2>Разместить товар</h2></div><p>Корм, лакомства, игрушки, амуниция и другие товары для животных.</p></div>
+        {% if account_user %}
+        <form class="add-form service-form" action="{{ url_for('add_food') }}" method="post" enctype="multipart/form-data">
+            <select name="category" required>
+                <option value="">Категория</option>
+                {% for ft in food_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+            </select>
+            <input type="text" name="title" placeholder="Название (например, Корм Acana для собак)" required>
+            <input type="text" name="city" list="cities" placeholder="Город" required>
+            <input type="number" name="price" placeholder="Цена, ₽ (необязательно)">
+            <textarea name="description" placeholder="Описание: состав, вес, состояние, условия передачи"></textarea>
+            <label class="file-input">Фото <input type="file" name="photo" accept="image/*"></label>
+            <button type="submit">Опубликовать товар</button>
+            <p class="form-note">Размещение бесплатное. Объявление активно 7 дней.</p>
+        </form>
+        {% else %}
+        <p>Для размещения товара <a href="{{ url_for('login') }}">войдите в аккаунт</a> или <a href="{{ url_for('register') }}">зарегистрируйтесь</a>.</p>
+        {% endif %}
+        </div>
+    </section>
+
+    <section class="cards-section">
+        <div class="catalog-header"><div><p class="eyebrow">Каталог товаров</p><h2>Зоопитание рядом</h2><span class="result-count">Найдено: {{ food|length }}</span></div></div>
+        <div class="cards">
+            {% for item in food %}
+            <article class="card">
+                <a class="card-link" href="{{ url_for('food_detail', food_id=item.id) }}">
+                {% if item.photo %}
+                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
+                {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
+                {% endif %}
+                <div class="card-body">
+                    <div class="card-topline"><span>{{ item.category }}</span></div>
+                    <h3>{{ item.title }}</h3>
+                    {% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}
+                    <p class="meta">{{ item.city or 'Город не указан' }}</p>
+                    <p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p>
+                    <span class="card-more">Подробнее →</span>
+                </div>
+                </a>
+            </article>
+            {% else %}
+            <div class="empty-state"><div>🦴</div><h3>Товаров пока нет</h3><p>Станьте первым, кто разместит товар для питомцев.</p><a href="#food-publish" data-open-publish>Разместить товар</a></div>
+            {% endfor %}
+        </div>
+    </section>
+</main>
+<datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>ZooLand — объявления о животных</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <nav class="header-nav" aria-label="Основная навигация">
+            <a href="#catalog">Объявления</a>
+            <a href="{{ url_for('services_list') }}">Услуги</a>
+            <a href="{{ url_for('food_list') }}">Зоопитание</a>
+            <a href="#how-it-works">Как это работает</a>
+        </nav>
+        {% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a><a class="account-link" href="{{ url_for('messages_list') }}">Сообщения</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}
+        <a class="publish-button" href="#publish" data-open-publish>+ Разместить</a>
+    </div>
+</header>
+
+<main>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="hero">
+        <div class="hero-content">
+            <p class="eyebrow">Питомцы ищут дом</p>
+            <h1>Найдите своего<br>нового друга</h1>
+            <p class="hero-copy">Проверенные объявления о животных и услугах для питомцев рядом с вами.</p>
+        </div>
+        <div class="hero-paws" aria-hidden="true"><span>✦</span><span>●</span><span>✦</span></div>
+    </section>
+
+    <section class="search-panel" aria-label="Поиск объявлений">
+        <form method="get" class="search-form">
+            <label class="search-field">
+                <span class="sr-only">Поиск</span>
+                <span aria-hidden="true">⌕</span>
+                <input type="search" name="q" value="{{ search }}" placeholder="Порода, вид животного, услуга или ключевое слово" title="Поиск понимает ошибочную раскладку: например, rjn = кот">
+            </label>
+            <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
+            <select name="kind" aria-label="Тип объявления">
+                <option value="">Животные и услуги</option>
+                <option value="animals" {% if kind == 'animals' %}selected{% endif %}>Животные</option>
+                <option value="services" {% if kind == 'services' %}selected{% endif %}>Услуги</option>
+            </select>
+            <select name="type" aria-label="Вид животного">
+                <option value="">Все</option>
+                {% for type in animal_types %}<option value="{{ type }}" {% if selected_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}
+            </select>
+            <button type="submit">Найти</button>
+        </form>
+    </section>
+
+    <section id="publish" class="add-form-section publish-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="publish-title">
+        <div class="modal-card">
+        <button class="modal-close" type="button" aria-label="Закрыть окно">×</button>
+        <div class="section-heading"><div><p class="eyebrow">Быстро и бесплатно</p><h2 id="publish-title">Разместить объявление</h2></div><p>Выберите: продать или отдать животное — бесплатно, либо разместить платную услугу для питомцев.</p></div>
+        <div class="publish-kind" role="tablist" aria-label="Тип размещения">
+            <button type="button" class="kind-tab active" data-kind="sale">Продажа животного</button>
+            <button type="button" class="kind-tab" data-kind="service">Услуга</button>
+        </div>
+        <form class="add-form kind-form" data-kind-form="sale" action="{{ url_for('add_animal') }}" method="post" enctype="multipart/form-data">
+            <div class="deal-type">
+                <span class="pet-types-label">Тип сделки:</span>
+                <div class="pet-types-grid">
+                    <label class="pet-check"><input type="radio" name="deal_type" value="sale" checked><span>Продажа</span></label>
+                    <label class="pet-check"><input type="radio" name="deal_type" value="buy"><span>Покупка</span></label>
+                </div>
+            </div>
+            <select name="type" id="animal-type" required>
+                <option value="">Выберите тип</option>
+                {% for type in animal_types %}<option value="{{ type }}">{{ type }}</option>{% endfor %}
+            </select>
+            <input type="text" name="breed" id="breed" list="breeds" placeholder="Порода (можно ввести свою)" required>
+            <input type="number" name="age" placeholder="Возраст" required>
+            <input type="number" name="price" placeholder="Цена" required>
+            <input type="text" name="city" list="cities" placeholder="Город" required>
+            <textarea name="description" placeholder="Описание: характер, особенности, условия передачи"></textarea>
+            <input type="tel" name="contacts" placeholder="Телефон: +7 999 123-45-67" required>
+            <label class="file-input">Фото питомца <input type="file" name="photo" accept="image/*"></label>
+            <button type="submit">Опубликовать объявление</button>
+            <p class="form-note">Размещая объявление, вы подтверждаете, что животное разрешено к законному содержанию и передаче в РФ. Охраняемые и дикие виды не публикуются.</p>
+        </form>
+        <form class="add-form kind-form" data-kind-form="service" action="{{ url_for('add_service') }}" method="post" enctype="multipart/form-data" hidden>
+            <select name="type" required>
+                <option value="">Тип услуги</option>
+                {% for st in service_types %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
+            </select>
+            <input type="text" name="title" placeholder="Название (например, Груминг кошек)" required>
+            <input type="text" name="city" list="cities" placeholder="Город" required>
+            <input type="number" name="price" placeholder="Цена услуги, ₽ (необязательно)">
+            <div class="pet-types">
+                <span class="pet-types-label">С какими животными работаете:</span>
+                <div class="pet-types-grid">
+                    {% for pt in pet_types %}<label class="pet-check"><input type="checkbox" name="pet_types" value="{{ pt }}"><span>{{ pt }}</span></label>{% endfor %}
+                </div>
+            </div>
+            <textarea name="description" placeholder="Описание услуги: опыт, условия, зона работы"></textarea>
+            <label class="file-input">Фото <input type="file" name="photo" accept="image/*"></label>
+            <button type="submit">Опубликовать услугу за 100 ₽ · 30 дней</button>
+            <p class="form-note">Публикация платная: первый месяц — 100 ₽, далее — 250 ₽/мес. Требуется вход в аккаунт.</p>
+        </form>
+        </div>
+    </section>
+
+    <section id="catalog" class="cards-section">
+        <div class="catalog-header"><div><p class="eyebrow">Каталог</p><h2>Свежие объявления</h2><span class="result-count">Найдено: {{ items|length }}</span></div>
+        <form method="get" class="sort-form"><input type="hidden" name="q" value="{{ search }}"><input type="hidden" name="city" value="{{ selected_city }}"><input type="hidden" name="type" value="{{ selected_type }}"><input type="hidden" name="kind" value="{{ kind }}"><label>Сортировка <select name="sort" onchange="this.form.submit()"><option value="new" {% if sort == 'new' %}selected{% endif %}>Сначала новые</option><option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>Сначала дешевле</option><option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>Сначала дороже</option></select></label></form></div>
+        <div class="cards">
+            {% for item in items %}
+            <article class="card">
+                {% if item.kind == 'service' %}
+                <a class="card-link" href="{{ url_for('service_detail', service_id=item.id) }}">
+                {% if item.photo %}
+                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
+                {% else %}<div class="card-placeholder" aria-hidden="true">✂️</div>
+                {% endif %}
+                <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span><span class="kind-badge">Услуга</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }} <span>•</span> {{ item.pet_types }}</p><p class="description">{{ item.description or 'Подробнее на странице услуги.' }}</p><span class="card-more">Подробнее →</span></div>
+                </a>
+                {% else %}
+                <a class="card-link" href="{{ url_for('animal_detail', animal_id=item.id) }}">
+                {% if item.photo %}
+                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.type }} {{ item.breed }}">
+                {% else %}<div class="card-placeholder" aria-hidden="true">🐾</div>
+                {% endif %}
+                <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span>{% if item.deal_type == 'buy' %}<span class="kind-badge buy-badge">Куплю</span>{% else %}<span class="kind-badge">Продам</span>{% endif %}</div>
+                <h3>{{ item.breed }}</h3><p class="price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</p><p class="meta">{{ item.age }} лет <span>•</span> {{ item.city }}</p><p class="description">{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p><span class="card-more">Подробнее →</span></div>
+                </a>
+                {% if can_manage(item) %}<div class="card-menu"><button class="menu-btn" type="button" aria-label="Действия с объявлением">•••</button><div class="menu-dropdown"><a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button type="submit">Удалить</button></form></div></div>{% endif %}
+                <a class="contact-link card-contact" href="tel:{{ item.contacts|replace(' ', '') }}">Связаться с хозяином</a>
+                {% if account_user and not can_manage(item) %}<a class="contact-link card-contact" href="{{ url_for('message_thread', listing_type='animal', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
+                {% endif %}
+            </article>
+            {% else %}
+            <div class="empty-state"><div>🐶</div><h3>Пока ничего не нашли</h3><p>Попробуйте изменить параметры поиска.</p><a href="{{ url_for('index') }}">Сбросить фильтры</a></div>
+            {% endfor %}
+        </div>
+    </section>
+</main>
+<datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist><datalist id="breeds"></datalist>
+<footer id="how-it-works"><div class="footer-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><p>Тёплые встречи начинаются здесь.</p><span>© 2026 ZooLand</span></div>
+    <div class="footer-inner support-footer">
+        <div class="support-block">
+            <strong>Связь с поддержкой</strong>
+            <div class="support-links">
+                <a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a>
+                <a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a>
+            </div>
+        </div>
+    </div>
+</footer>
+<script>window.zooBreeds = {{ breeds|tojson }};</script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

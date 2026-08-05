@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ animal.type }} {{ animal.breed }} — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>{% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}<a class="back-link" href="{{ url_for('index') }}">← К объявлениям</a></div></header>
+<main class="detail-page">
+    <article class="detail-card">
+        <div class="detail-media">
+            {% if animal.photo %}
+            <img src="{{ url_for('static', filename='uploads/' + animal.photo) }}" alt="{{ animal.type }} {{ animal.breed }}">
+            {% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🐾</div>
+            {% endif %}
+        </div>
+        <div class="detail-body">
+            <p class="eyebrow">{{ animal.type }}{% if animal.deal_type == 'buy' %} · Куплю{% else %} · Продам{% endif %}</p>
+            <h1>{{ animal.breed }}</h1>
+            <p class="detail-price">{{ '{:,.0f}'.format(animal.price or 0).replace(',', ' ') }} ₽</p>
+            <p class="detail-meta">{{ animal.age }} лет <span>•</span> {{ animal.city }}</p>
+            <p class="detail-views">👁 {{ views_today }} за сутки · {{ views_total }} всего</p>
+            <div class="detail-description">
+                <h2>Описание</h2>
+                <p>{{ animal.description or 'Подробности уточняйте у автора объявления.' }}</p>
+            </div>
+            <div class="owner-card">
+                <h2>Связаться с владельцем</h2>
+                {% if account_user %}
+                <p class="owner-hint">Нажмите «Позвонить», чтобы раскрыть номер владельца.</p>
+                <div class="owner-phone reveal-phone" data-phone="{{ animal.contacts }}">+7 ••• ••• •• ••</div>
+                <div class="owner-actions">
+                    <button type="button" class="contact-link detail-call reveal-call">Позвонить владельцу</button>
+                    {% if owner and owner.telegram %}
+                    <a class="contact-link detail-call telegram-call" href="https://t.me/{{ owner.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>
+                    {% endif %}
+                    {% if not is_owner %}
+                    <a class="contact-link detail-call" href="{{ url_for('message_thread', listing_type='animal', listing_id=animal.id) }}">Написать сообщение</a>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="owner-hint">Телефон владельца доступен только зарегистрированным пользователям.</p>
+                <div class="owner-actions">
+                    {% if owner and owner.telegram %}
+                    <a class="contact-link detail-call telegram-call" href="https://t.me/{{ owner.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>
+                    {% endif %}
+                    <a class="contact-link detail-call" href="{{ url_for('login') }}">Войти, чтобы увидеть контакты</a>
+                    <a class="contact-link detail-call register-call" href="{{ url_for('register') }}">Зарегистрироваться</a>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </article>
+    {% if similar %}
+    <section class="similar-section">
+        <div class="similar-header"><p class="eyebrow">Похожие объявления</p><h2>Ещё {{ similar|length }} рядом</h2><span class="result-count">В радиусе 50 км · {{ animal.type }}</span></div>
+        <div class="similar-cards">
+            {% for item in similar %}
+            <a class="similar-card" href="{{ url_for('animal_detail', animal_id=item.id) }}">
+                {% if item.photo %}
+                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.type }} {{ item.breed }}">
+                {% else %}<div class="similar-photo similar-placeholder" aria-hidden="true">🐾</div>
+                {% endif %}
+                <div class="similar-body">
+                    <div class="similar-topline"><span>{{ item.type }}</span><span class="similar-price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</span></div>
+                    <h3>{{ item.breed }}</h3>
+                    <p class="similar-meta">{{ item.age }} лет <span>•</span> {{ item.city }}</p>
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</main>
+<script>
+document.querySelectorAll('.reveal-call').forEach(function(button) {
+    button.addEventListener('click', function() {
+        var phone = document.querySelector('.reveal-phone');
+        if (!phone) return;
+        var number = phone.dataset.phone;
+        phone.textContent = number;
+        phone.classList.add('revealed');
+        var link = document.createElement('a');
+        link.className = 'contact-link detail-call revealed-call';
+        link.href = 'tel:' + number.replace(/[^+\d]/g, '');
+        link.textContent = 'Позвонить';
+        button.replaceWith(link);
+    });
+});
+</script>
+<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+</body>
+</html>

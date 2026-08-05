@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ item.title }} — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>{% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}<a class="back-link" href="{{ url_for('food_list') }}">← К товарам</a></div></header>
+<main class="detail-page">
+    <article class="detail-card">
+        <div class="detail-media">
+            {% if item.photo %}
+            <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
+            {% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🦴</div>
+            {% endif %}
+        </div>
+        <div class="detail-body">
+            <p class="eyebrow">{{ item.category }}</p>
+            <h1>{{ item.title }}</h1>
+            {% if item.price %}<p class="detail-price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}
+            <p class="detail-meta">{{ item.city or 'Город не указан' }}</p>
+            <p class="detail-views">👁 {{ item.views_total or 0 }} просмотров</p>
+            <div class="detail-description">
+                <h2>Описание</h2>
+                <p>{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p>
+            </div>
+            <div class="owner-card">
+                <h2>Связаться с продавцом</h2>
+                {% if account_user %}
+                <p class="owner-hint">Автор: {{ owner.name if owner else 'Пользователь' }} · Нажмите «Позвонить», чтобы раскрыть номер.</p>
+                <div class="owner-phone reveal-phone" data-phone="{{ owner.phone if owner else '' }}">+7 ••• ••• •• ••</div>
+                <div class="owner-actions">
+                    <button type="button" class="contact-link detail-call reveal-call">Позвонить продавцу</button>
+                    {% if owner and owner.telegram %}
+                    <a class="contact-link detail-call telegram-call" href="https://t.me/{{ owner.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>
+                    {% endif %}
+                    {% if not my_item %}
+                    <a class="contact-link detail-call" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="owner-hint">Контакты продавца доступны только зарегистрированным пользователям.</p>
+                <div class="owner-actions">
+                    <a class="contact-link detail-call" href="{{ url_for('login') }}">Войти, чтобы увидеть контакты</a>
+                    <a class="contact-link detail-call register-call" href="{{ url_for('register') }}">Зарегистрироваться</a>
+                </div>
+                {% endif %}
+            </div>
+            {% if account_user and my_item %}
+            <form method="post" action="{{ url_for('delete_food', food_id=item.id) }}" class="service-delete">
+                <button type="submit" class="danger-button">Удалить товар</button>
+            </form>
+            {% endif %}
+        </div>
+    </article>
+</main>
+<script>
+document.querySelectorAll('.reveal-call').forEach(function(button) {
+    button.addEventListener('click', function() {
+        var phone = document.querySelector('.reveal-phone');
+        if (!phone || !phone.dataset.phone) return;
+        var number = phone.dataset.phone;
+        phone.textContent = number;
+        phone.classList.add('revealed');
+        var link = document.createElement('a');
+        link.className = 'contact-link detail-call revealed-call';
+        link.href = 'tel:' + number.replace(/[^+\d]/g, '');
+        link.textContent = 'Позвонить';
+        button.replaceWith(link);
+    });
+});
+</script>
+</body>
+</html>

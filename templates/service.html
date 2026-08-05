@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ service.title }} — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('services_list') }}">← К услугам</a></div></header>
+<main class="detail-page">
+    <article class="detail-card">
+        <div class="detail-media">
+            {% if service.photo %}
+            <img src="{{ url_for('static', filename='uploads/' + service.photo) }}" alt="{{ service.title }}">
+            {% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">✂️</div>
+            {% endif %}
+        </div>
+        <div class="detail-body">
+            <p class="eyebrow">{{ service.type }}</p>
+            <h1>{{ service.title }}</h1>
+            {% if service.price %}<p class="detail-price">{{ '{:,.0f}'.format(service.price).replace(',', ' ') }} ₽</p>{% endif %}
+            <p class="detail-meta">{{ service.city or 'Город не указан' }}</p>
+            <p class="service-pets">Животные: {{ service.pet_types }}</p>
+            <div class="detail-description">
+                <h2>Об услуге</h2>
+                <p>{{ service.description or 'Подробности уточняйте у автора услуги.' }}</p>
+            </div>
+            <div class="owner-card">
+                <h2>Связаться с исполнителем</h2>
+                {% if account_user %}
+                <p class="owner-hint">Автор: {{ owner.name if owner else 'Пользователь' }} · Нажмите «Позвонить», чтобы раскрыть номер.</p>
+                <div class="owner-phone reveal-phone" data-phone="{{ owner.phone if owner else '' }}">+7 ••• ••• •• ••</div>
+                <div class="owner-actions">
+                    <button type="button" class="contact-link detail-call reveal-call">Позвонить исполнителю</button>
+                    {% if owner and owner.telegram %}
+                    <a class="contact-link detail-call telegram-call" href="https://t.me/{{ owner.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>
+                    {% endif %}
+                    {% if not my_service %}
+                    <a class="contact-link detail-call" href="{{ url_for('message_thread', listing_type='service', listing_id=service.id) }}">Написать сообщение</a>
+                    {% endif %}
+                </div>
+                {% else %}
+                <p class="owner-hint">Контакты исполнителя доступны только зарегистрированным пользователям.</p>
+                <div class="owner-actions">
+                    <a class="contact-link detail-call" href="{{ url_for('login') }}">Войти, чтобы увидеть контакты</a>
+                    <a class="contact-link detail-call register-call" href="{{ url_for('register') }}">Зарегистрироваться</a>
+                </div>
+                {% endif %}
+            </div>
+            {% if account_user and my_service %}
+            <form method="post" action="{{ url_for('renew_service', service_id=service.id) }}" class="service-renew">
+                <button type="submit" class="settings-save">Продлить на 30 дней</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_service', service_id=service.id) }}" class="service-delete">
+                <button type="submit" class="danger-button">Удалить услугу</button>
+            </form>
+            {% endif %}
+        </div>
+    </article>
+</main>
+<script>
+document.querySelectorAll('.reveal-call').forEach(function(button) {
+    button.addEventListener('click', function() {
+        var phone = document.querySelector('.reveal-phone');
+        if (!phone || !phone.dataset.phone) return;
+        var number = phone.dataset.phone;
+        phone.textContent = number;
+        phone.classList.add('revealed');
+        var link = document.createElement('a');
+        link.className = 'contact-link detail-call revealed-call';
+        link.href = 'tel:' + number.replace(/[^+\d]/g, '');
+        link.textContent = 'Позвонить';
+        button.replaceWith(link);
+    });
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Редактировать объявление — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← К объявлениям</a></div></header>
+<main class="edit-page">
+    <div class="edit-title"><p class="eyebrow">Объявление №{{ animal['id'] }}</p><h1>Редактировать объявление</h1><p>Обновите информацию о питомце и сохраните изменения.</p></div>
+    <form class="add-form edit-form" action="{{ url_for('update_animal', animal_id=animal['id']) }}" method="post" enctype="multipart/form-data">
+    <div class="deal-type">
+        <span class="pet-types-label">Тип сделки:</span>
+        <div class="pet-types-grid">
+            <label class="pet-check"><input type="radio" name="deal_type" value="sale" {% if animal['deal_type'] != 'buy' %}checked{% endif %}><span>Продажа</span></label>
+            <label class="pet-check"><input type="radio" name="deal_type" value="buy" {% if animal['deal_type'] == 'buy' %}checked{% endif %}><span>Покупка</span></label>
+        </div>
+    </div>
+    <select name="type" required>
+        {% for type in animal_types %}<option value="{{ type }}" {% if animal['type'] == type %}selected{% endif %}>{{ type }}</option>{% endfor %}
+        </select>
+        <input type="text" name="breed" value="{{ animal['breed'] }}" placeholder="Порода" required>
+        <input type="number" name="age" value="{{ animal['age'] }}" placeholder="Возраст" required>
+        <input type="number" name="price" value="{{ animal['price'] }}" placeholder="Цена" required>
+        <input type="text" name="city" value="{{ animal['city'] }}" list="cities" placeholder="Город" required>
+        <textarea name="description" placeholder="Описание">{{ animal['description'] or '' }}</textarea>
+        <input type="text" name="contacts" value="{{ animal['contacts'] }}" placeholder="Контакты" required>
+        <label class="file-input">Заменить фото <input type="file" name="photo" accept="image/*"></label>
+        <button type="submit">Сохранить изменения</button>
+    </form>
+    <datalist id="cities">{% for city in russian_cities|default([]) %}<option value="{{ city }}">{% endfor %}</datalist>
+</main>
+</body>
+</html>

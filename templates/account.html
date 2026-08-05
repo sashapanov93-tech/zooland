@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Личный кабинет — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            <a class="back-link" href="{{ url_for('index') }}">К объявлениям</a>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-button">Выйти</button></form>
+        </div>
+    </div>
+</header>
+<main class="account-page">
+    <nav class="account-tabs" aria-label="Разделы кабинета">
+        <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
+        <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
+    </nav>
+    <section class="account-hero">
+        <p class="eyebrow">Личный кабинет</p>
+        <h1>Здравствуйте, {{ account_user.name }}!</h1>
+        <p>ID пользователя: #{{ account_user.id }} · Активные объявления живут 7 дней, затем попадают в архив.</p>
+        <div class="balance-row">
+            <div class="balance-card">
+                <span class="balance-label">Баланс</span>
+                <span class="balance-value">{{ '{:,.0f}'.format(account_user.balance or 0).replace(',', ' ') }} ₽</span>
+            </div>
+            <form method="post" action="{{ url_for('topup') }}" class="topup-form">
+                <input type="number" name="amount" min="100" max="100000" step="100" placeholder="Сумма" required>
+                <button type="submit">Пополнить баланс</button>
+            </form>
+        </div>
+        <a class="publish-button" href="{{ url_for('index', _anchor='publish') }}">+ Новое объявление</a>
+    </section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="account-section">
+        <h2>Активные · {{ active|length }}</h2>
+        <div class="account-list">
+            {% for animal in active %}
+            <article class="account-item">
+                <div>
+                    <strong>{{ animal.type }} · {{ animal.breed }}{% if animal.deal_type == 'buy' %} · Куплю{% else %} · Продам{% endif %}</strong>
+                    <p>{{ animal.city }} · {{ animal.price }} ₽</p>
+                    <small>До {{ animal.expires_at[:10] }}</small>
+                </div>
+                <div class="item-actions">
+                    <a href="{{ url_for('animal_detail', animal_id=animal.id) }}">Открыть</a>
+                    <a href="{{ url_for('edit_animal', animal_id=animal.id) }}">Редактировать</a>
+                    <form action="{{ url_for('extend_animal', animal_id=animal.id) }}" method="post"><button class="extend">Продлить на 7 дней · 100 ₽</button></form>
+                    <form action="{{ url_for('archive_animal', animal_id=animal.id) }}" method="post"><button>В архив</button></form>
+                    <form action="{{ url_for('delete_animal', animal_id=animal.id) }}" method="post"><button class="danger">Удалить</button></form>
+                </div>
+            </article>
+            {% else %}<p class="muted">Нет активных объявлений.</p>{% endfor %}
+        </div>
+    </section>
+    <section class="account-section">
+        <h2>Архив · {{ archived|length }}</h2>
+        <div class="account-list">
+            {% for animal in archived %}
+            <article class="account-item">
+                <div>
+                    <strong>{{ animal.type }} · {{ animal.breed }}{% if animal.deal_type == 'buy' %} · Куплю{% else %} · Продам{% endif %}</strong>
+                    <p>{{ animal.city }} · {{ animal.price }} ₽</p>
+                    <small>Срок публикации закончился</small>
+                </div>
+                <div class="item-actions">
+                    <form action="{{ url_for('reactivate', animal_id=animal.id) }}" method="post"><button class="reactivate">Опубликовать снова · 100 ₽</button></form>
+                    <a href="{{ url_for('edit_animal', animal_id=animal.id) }}">Редактировать</a>
+                    <form action="{{ url_for('delete_animal', animal_id=animal.id) }}" method="post"><button class="danger">Удалить</button></form>
+                </div>
+            </article>
+            {% else %}<p class="muted">В архиве пока ничего нет.</p>{% endfor %}
+        </div>
+    </section>
+</main>
+<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>{% if mode == 'login' %}Вход{% else %}Регистрация{% endif %} — ZooLand</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body>
+  <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← На главную</a></div></header>
+  <main class="auth-page"><section class="auth-card">
+    <p class="eyebrow">ZooLand</p>
+    <h1>{% if mode == 'login' %}С возвращением{% else %}Создайте аккаунт{% endif %}</h1>
+    <p>{% if mode == 'login' %}Войдите, чтобы управлять своими объявлениями.{% else %}Укажите российский телефон и корректный email.{% endif %}</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <form method="post" class="auth-form">
+      {% if mode == 'register' %}<label>Имя<input name="name" required autocomplete="name"></label><label>Телефон РФ<input name="phone" type="tel" placeholder="+7 999 123-45-67" autocomplete="tel" required></label>{% endif %}
+      <label>Email<input name="email" type="email" required autocomplete="email"></label>
+      <label>Пароль<input name="password" type="password" minlength="6" required autocomplete="{% if mode == 'login' %}current-password{% else %}new-password{% endif %}"></label>
+      <button type="submit">{% if mode == 'login' %}Войти{% else %}Зарегистрироваться{% endif %}</button>
+    </form>
+    <p class="auth-switch">{% if mode == 'login' %}Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a>{% else %}Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a>{% endif %}</p>
+  </section></main>
+</body>
+</html>
