@@ -29,31 +29,50 @@
         <p class="eyebrow">Личный кабинет</p>
         <h1>Сообщения</h1>
         <p>Переписка с продавцами и покупателями по вашим объявлениям.</p>
+        <nav class="message-folders" aria-label="Папки сообщений">
+            <a href="{{ url_for('messages_list', folder='inbox') }}" class="{% if folder == 'inbox' %}active{% endif %}">Входящие · {{ counts.inbox }}</a>
+            <a href="{{ url_for('messages_list', folder='archive') }}" class="{% if folder == 'archive' %}active{% endif %}">Архив · {{ counts.archive }}</a>
+            <a href="{{ url_for('messages_list', folder='spam') }}" class="{% if folder == 'spam' %}active{% endif %}">Спам · {{ counts.spam }}</a>
+        </nav>
     </section>
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
     <section class="account-section">
         <div class="account-list">
             {% for dialog in dialogs %}
-            <a class="dialog-item" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id) }}">
-                <div class="dialog-avatar">
-                    {% if dialog.other_avatar %}
-                    <img src="{{ url_for('static', filename='uploads/' + dialog.other_avatar) }}" alt="">
-                    {% else %}
-                    <span>{{ dialog.other_name[:1]|upper }}</span>
-                    {% endif %}
-                </div>
-                <div class="dialog-body">
-                    <div class="dialog-topline">
-                        <strong>{{ dialog.other_name }}</strong>
-                        <span class="dialog-time">{{ dialog.last_time[:16].replace('T', ' ') }}</span>
+            <div class="dialog-item dialog-row">
+                <a class="dialog-main" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id) }}">
+                    <div class="dialog-avatar">
+                        {% if dialog.other_avatar %}
+                        <img src="{{ url_for('static', filename='uploads/' + dialog.other_avatar) }}" alt="">
+                        {% else %}
+                        <span>{{ dialog.other_name[:1]|upper }}</span>
+                        {% endif %}
                     </div>
-                    <p class="dialog-listing">{{ dialog.title }}</p>
-                    <p class="dialog-preview">{{ dialog.last_message }}</p>
-                </div>
-                {% if dialog.unread %}<span class="dialog-unread">{{ dialog.unread }}</span>{% endif %}
-            </a>
+                    <div class="dialog-body">
+                        <div class="dialog-topline">
+                            <strong>{{ dialog.other_name }}</strong>
+                            <span class="dialog-time">{{ dialog.last_time[:16].replace('T', ' ') }}</span>
+                        </div>
+                        <p class="dialog-listing">{{ dialog.title }}</p>
+                        <p class="dialog-preview">{{ dialog.last_message }}</p>
+                    </div>
+                    {% if dialog.unread %}<span class="dialog-unread">{{ dialog.unread }}</span>{% endif %}
+                </a>
+                {% if folder == 'inbox' %}
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='archive') }}" class="dialog-action">
+                    <button type="submit" title="В архив">📁</button>
+                </form>
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='spam') }}" class="dialog-action">
+                    <button type="submit" title="В спам">🚫</button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='inbox') }}" class="dialog-action">
+                    <button type="submit" title="Вернуть во входящие">↩</button>
+                </form>
+                {% endif %}
+            </div>
             {% else %}
-            <div class="empty-state"><div>💬</div><h3>Сообщений пока нет</h3><p>Напишите продавцу со страницы объявления, чтобы начать переписку.</p><a href="{{ url_for('index') }}">К объявлениям</a></div>
+            <div class="empty-state"><div>💬</div><h3>{% if folder == 'spam' %}В спаме пусто{% elif folder == 'archive' %}В архиве пусто{% else %}Сообщений пока нет{% endif %}</h3><p>{% if folder == 'inbox' %}Напишите продавцу со страницы объявления, чтобы начать переписку.{% else %}Здесь будут диалоги, перемещённые из входящих.{% endif %}</p>{% if folder == 'inbox' %}<a href="{{ url_for('index') }}">К объявлениям</a>{% endif %}</div>
             {% endfor %}
         </div>
     </section>

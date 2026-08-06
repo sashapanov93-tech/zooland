@@ -87,6 +87,7 @@
                     <span class="card-more">Подробнее →</span>
                 </div>
                 </a>
+                {% if account_user and item.user_id != account_user.id %}<a class="contact-link card-contact" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
             </article>
             {% else %}
             <div class="empty-state"><div>🦴</div><h3>Товаров пока нет</h3><p>Станьте первым, кто разместит товар для питомцев.</p><a href="#food-publish" data-open-publish>Разместить товар</a></div>

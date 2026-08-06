@@ -99,10 +99,15 @@ def init_db():
     cursor.execute("""CREATE TABLE IF NOT EXISTS messages (
         id INTEGER PRIMARY KEY AUTOINCREMENT, listing_type TEXT NOT NULL,
         listing_id INTEGER NOT NULL, sender_id INTEGER NOT NULL, receiver_id INTEGER NOT NULL,
-        body TEXT NOT NULL, created_at TEXT NOT NULL, read INTEGER DEFAULT 0
+        body TEXT NOT NULL, created_at TEXT NOT NULL, read INTEGER DEFAULT 0, folder TEXT DEFAULT 'inbox'
     )""")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_listing ON messages(listing_type, listing_id)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_messages_receiver ON messages(receiver_id, read)")
+    # Миграция: добавляем колонку folder, если её нет.
+    message_columns = {row[1] for row in cursor.execute("PRAGMA table_info(messages)")}
+    if "folder" not in message_columns:
+        cursor.execute("ALTER TABLE messages ADD COLUMN folder TEXT DEFAULT 'inbox'")
+    cursor.execute("UPDATE messages SET folder='inbox' WHERE folder IS NULL")
     user_columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)")}
     for column, definition in {
         "phone": "TEXT", "email_verified": "INTEGER DEFAULT 0", "balance": "INTEGER DEFAULT 0",
@@ -261,7 +266,7 @@ def index():
     city, animal_type, search, kind = (request.args.get(key, "").strip() for key in ("city", "type", "q", "kind"))
     sort = request.args.get("sort", "new")
     # Животные (объявления о продаже) — бесплатная публикация.
-    if kind != "services":
+    if kind != "services" and kind != "food":
         query, conditions, params = "SELECT * FROM animals", ["status='active'"], []
         if city: conditions.append("city=?"); params.append(city)
         if animal_type: conditions.append("type=?"); params.append(animal_type)
@@ -275,7 +280,7 @@ def index():
     else:
         animals = []
     # Услуги для животных — платная публикация.
-    if kind != "animals":
+    if kind != "animals" and kind != "food":
         query, conditions, params = "SELECT * FROM services", ["status='active'"], []
         if city: conditions.append("city=?"); params.append(city)
         query += " WHERE " + " AND ".join(conditions) + " ORDER BY id DESC"
@@ -287,8 +292,21 @@ def index():
             service["kind"] = "service"
     else:
         services = []
-    items = sorted(list(animals) + list(services), key=lambda item: item["created_at"], reverse=True)[:24]
-    return render_template("index.html", items=items, animals=animals, services=services,
+    # Зоопитание и товары — бесплатная публикация.
+    if kind != "animals" and kind != "services":
+        query, conditions, params = "SELECT * FROM food", ["status='active'"], []
+        if city: conditions.append("city=?"); params.append(city)
+        query += " WHERE " + " AND ".join(conditions) + " ORDER BY id DESC"
+        food = [dict(row) for row in db().execute(query, params).fetchall()]
+        if search:
+            search_lower = search.casefold()
+            food = [f for f in food if search_lower in (f["title"] or "").casefold() or search_lower in (f["description"] or "").casefold() or search_lower in (f["category"] or "").casefold()]
+        for item in food:
+            item["kind"] = "food"
+    else:
+        food = []
+    items = sorted(list(animals) + list(services) + list(food), key=lambda item: item["created_at"], reverse=True)[:24]
+    return render_template("index.html", items=items, animals=animals, services=services, food=food,
                            cities=RUSSIAN_CITIES, selected_city=city, selected_type=animal_type,
                            search=search, sort=sort, kind=kind)
 
@@ -826,20 +844,25 @@ def listing_title(listing_type, listing_id):
 @app.route("/messages")
 @login_required
 def messages_list():
-    """Список диалогов пользователя."""
+    """Список диалогов пользователя с папками: входящие, архив, спам."""
     user = current_user()
+    folder = request.args.get("folder", "inbox")
+    if folder not in ("inbox", "archive", "spam"):
+        folder = "inbox"
+    # Все сообщения пользователя, отсортированные по убыванию id.
     rows = db().execute("""SELECT m.*, u.name AS other_name, u.avatar AS other_avatar
                            FROM messages m
                            JOIN users u ON u.id = CASE WHEN m.sender_id=? THEN m.receiver_id ELSE m.sender_id END
                            WHERE m.sender_id=? OR m.receiver_id=?
-                           ORDER BY m.id DESC""", (user["id"], user["id"], user["id"])).fetchall()
-    # Группируем по диалогу (пара listing_type+listing_id+собеседник).
-    dialogs = {}
+                           ORDER BY m.id DESC""",
+                        (user["id"], user["id"], user["id"])).fetchall()
+    # Группируем по диалогу (listing_type + listing_id + собеседник), берём последнее сообщение.
+    dialogs_map = {}
     for row in rows:
         other_id = row["receiver_id"] if row["sender_id"] == user["id"] else row["sender_id"]
         key = (row["listing_type"], row["listing_id"], other_id)
-        if key not in dialogs:
-            dialogs[key] = {
+        if key not in dialogs_map:
+            dialogs_map[key] = {
                 "listing_type": row["listing_type"],
                 "listing_id": row["listing_id"],
                 "other_id": other_id,
@@ -847,13 +870,38 @@ def messages_list():
                 "other_avatar": row["other_avatar"],
                 "last_message": row["body"],
                 "last_time": row["created_at"],
-                "unread": 0,
+                "folder": row["folder"] or "inbox",
             }
-        if row["receiver_id"] == user["id"] and not row["read"]:
-            dialogs[key]["unread"] += 1
-    for dialog in dialogs.values():
+    dialogs = []
+    for key, dialog in dialogs_map.items():
+        if dialog["folder"] != folder:
+            continue
+        unread = db().execute("""SELECT COUNT(*) AS c FROM messages
+                                 WHERE listing_type=? AND listing_id=? AND receiver_id=? AND read=0 AND folder='inbox'""",
+                              (dialog["listing_type"], dialog["listing_id"], user["id"])).fetchone()["c"]
+        dialog["unread"] = unread
         dialog["title"] = listing_title(dialog["listing_type"], dialog["listing_id"])
-    return render_template("messages.html", dialogs=list(dialogs.values()), tab="messages")
+        dialogs.append(dialog)
+    # Считаем количество диалогов в каждой папке.
+    counts = {"inbox": 0, "archive": 0, "spam": 0}
+    for dialog in dialogs_map.values():
+        counts[dialog["folder"]] = counts.get(dialog["folder"], 0) + 1
+    return render_template("messages.html", dialogs=dialogs, tab="messages",
+                           folder=folder, counts=counts)
+
+
+@app.route("/messages/<listing_type>/<int:listing_id>/folder/<folder>", methods=["POST"])
+@login_required
+def move_message(listing_type, listing_id, folder):
+    """Перемещает диалог в архив, спам или обратно во входящие."""
+    if folder not in ("inbox", "archive", "spam"):
+        abort(400)
+    user = current_user()
+    # Обновляем папку только у сообщений текущего пользователя в этом диалоге.
+    db().execute("""UPDATE messages SET folder=? WHERE listing_type=? AND listing_id=? AND (sender_id=? OR receiver_id=?)""",
+                 (folder, listing_type, listing_id, user["id"], user["id"]))
+    db().commit()
+    return redirect(url_for("messages_list", folder=folder if folder == "inbox" else "inbox"))
 
 
 @app.route("/messages/<listing_type>/<int:listing_id>")

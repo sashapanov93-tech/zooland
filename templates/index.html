@@ -43,9 +43,10 @@
             </label>
             <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
             <select name="kind" aria-label="Тип объявления">
-                <option value="">Животные и услуги</option>
+                <option value="">Животные, услуги и товары</option>
                 <option value="animals" {% if kind == 'animals' %}selected{% endif %}>Животные</option>
                 <option value="services" {% if kind == 'services' %}selected{% endif %}>Услуги</option>
+                <option value="food" {% if kind == 'food' %}selected{% endif %}>Зоопитание</option>
             </select>
             <select name="type" aria-label="Вид животного">
                 <option value="">Все</option>
@@ -113,7 +114,17 @@
         <div class="cards">
             {% for item in items %}
             <article class="card">
-                {% if item.kind == 'service' %}
+                {% if item.kind == 'food' %}
+                <a class="card-link" href="{{ url_for('food_detail', food_id=item.id) }}">
+                {% if item.photo %}
+                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
+                {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
+                {% endif %}
+                <div class="card-body"><div class="card-topline"><span>{{ item.category }}</span><span class="kind-badge">Товар</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }}</p><p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p><span class="card-more">Подробнее →</span></div>
+                </a>
+                {% if account_user and item.user_id != account_user.id %}<a class="contact-link card-contact" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
+                {% elif item.kind == 'service' %}
                 <a class="card-link" href="{{ url_for('service_detail', service_id=item.id) }}">
                 {% if item.photo %}
                 <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
