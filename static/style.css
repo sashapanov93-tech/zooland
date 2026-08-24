@@ -888,6 +888,65 @@ a.owner-rating:hover { color:var(--green-dark); text-decoration:underline; }
   }
 }
 
+/* Публичная реклама выделяется на зелёном фоне сайта */
+.public-advertising-banner {
+  position:relative;
+  isolation:isolate;
+  border-color:#c89d44;
+  background:
+    radial-gradient(circle at 92% 16%, rgba(255, 255, 255, .68) 0 70px, transparent 71px),
+    linear-gradient(118deg, #fffdf7 0%, #fff2ce 55%, #f1d9a8 100%);
+  box-shadow:0 14px 30px rgba(92, 63, 17, .16), inset 0 1px 0 rgba(255, 255, 255, .8);
+}
+.public-advertising-banner::before {
+  content:"";
+  position:absolute;
+  z-index:0;
+  left:-62px;
+  bottom:-116px;
+  width:190px;
+  height:190px;
+  border:24px solid rgba(176, 126, 36, .09);
+  border-radius:50%;
+  pointer-events:none;
+}
+.public-advertising-banner > * {
+  position:relative;
+  z-index:1;
+}
+.public-advertising-mark {
+  background:linear-gradient(145deg, #176e4d, #0f4e37);
+  box-shadow:0 9px 20px rgba(39, 67, 43, .2);
+}
+.public-advertising-meta {
+  color:#684b18;
+}
+.public-advertising-meta span {
+  background:#704c12;
+}
+.public-advertising-copy h2 {
+  color:#282218;
+}
+.public-advertising-copy p {
+  color:#5e5442;
+}
+.public-advertising-action {
+  background:var(--green-dark);
+  box-shadow:0 8px 18px rgba(20, 118, 80, .2);
+}
+.public-advertising-action:hover {
+  background:#0f5d3e;
+}
+.public-advertising-action:focus-visible {
+  outline:3px solid #704c12;
+  outline-offset:3px;
+}
+.card-promoted {
+  border-color:#c39732;
+  background:linear-gradient(180deg, #fffdf8, #fff6dd);
+  box-shadow:0 11px 26px rgba(107, 76, 15, .16);
+}
+
 @media (max-width:640px) {
   .application-filters {
     flex-wrap:nowrap;
