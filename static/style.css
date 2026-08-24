@@ -1452,15 +1452,15 @@ a.owner-rating:hover { color:var(--green-dark); text-decoration:underline; }
   }
 }
 
-/* Публичная реклама выделяется на зелёном фоне сайта */
+/* Тёмная публичная реклама заметно отделяется от зелёного фона сайта */
 .public-advertising-banner {
   position:relative;
   isolation:isolate;
-  border-color:#c89d44;
+  border-color:#b88a3d;
   background:
-    radial-gradient(circle at 92% 16%, rgba(255, 255, 255, .68) 0 70px, transparent 71px),
-    linear-gradient(118deg, #fffdf7 0%, #fff2ce 55%, #f1d9a8 100%);
-  box-shadow:0 14px 30px rgba(92, 63, 17, .16), inset 0 1px 0 rgba(255, 255, 255, .8);
+    radial-gradient(circle at 92% 16%, rgba(241, 206, 122, .18) 0 70px, transparent 71px),
+    linear-gradient(118deg, #243a31 0%, #384033 48%, #5a4327 100%);
+  box-shadow:0 16px 34px rgba(24, 32, 26, .28), inset 0 1px 0 rgba(255, 255, 255, .1);
 }
 .public-advertising-banner::before {
   content:"";
@@ -1470,7 +1470,7 @@ a.owner-rating:hover { color:var(--green-dark); text-decoration:underline; }
   bottom:-116px;
   width:190px;
   height:190px;
-  border:24px solid rgba(176, 126, 36, .09);
+  border:24px solid rgba(241, 206, 122, .14);
   border-radius:50%;
   pointer-events:none;
 }
@@ -1479,36 +1479,40 @@ a.owner-rating:hover { color:var(--green-dark); text-decoration:underline; }
   z-index:1;
 }
 .public-advertising-mark {
-  background:linear-gradient(145deg, #176e4d, #0f4e37);
-  box-shadow:0 9px 20px rgba(39, 67, 43, .2);
+  border:1px solid rgba(255, 244, 214, .3);
+  background:linear-gradient(145deg, #e3b550, #b77a2a);
+  color:#2b2519;
+  box-shadow:0 9px 22px rgba(20, 24, 19, .3);
 }
 .public-advertising-meta {
-  color:#684b18;
+  color:#f1ce7a;
 }
 .public-advertising-meta span {
-  background:#704c12;
+  background:#e3b550;
+  color:#2b2519;
 }
 .public-advertising-copy h2 {
-  color:#282218;
+  color:#fffaf0;
 }
 .public-advertising-copy p {
-  color:#5e5442;
+  color:#e7ddca;
 }
 .public-advertising-action {
-  background:var(--green-dark);
-  box-shadow:0 8px 18px rgba(20, 118, 80, .2);
+  border:1px solid rgba(255, 255, 255, .18);
+  background:#126b4a;
+  box-shadow:0 8px 20px rgba(9, 27, 20, .3);
 }
 .public-advertising-action:hover {
-  background:#0f5d3e;
+  background:#17845b;
 }
 .public-advertising-action:focus-visible {
-  outline:3px solid #704c12;
+  outline:3px solid #f1ce7a;
   outline-offset:3px;
 }
 .card-promoted {
-  border-color:#c39732;
-  background:linear-gradient(180deg, #fffdf8, #fff6dd);
-  box-shadow:0 11px 26px rgba(107, 76, 15, .16);
+  border-color:#b8892f;
+  background:linear-gradient(180deg, #f7e8be, #e8c777);
+  box-shadow:0 12px 28px rgba(91, 64, 13, .2);
 }
 
 @media (max-width:640px) {
