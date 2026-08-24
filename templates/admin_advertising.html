@@ -4,21 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Рекламные заявки — ZooLand</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-admin-2') }}">
 </head>
-<body>
+<body class="advertising-admin-page">
 <header class="site-header"><div class="header-inner">
     <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
     <div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_job_applications') }}">Отклики</a><a class="back-link" href="{{ url_for('admin_users') }}">Пользователи</a></div>
 </div></header>
 <main class="account-page">
     <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Рекламные заявки · {{ advertising_requests|length }}</h1><p>Настройте креатив и сроки. Статус «Активна» публикует готовое размещение автоматически.</p></section>
-    {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
-    <nav class="application-filters"><a class="{% if not selected_status %}active{% endif %}" href="{{ url_for('admin_advertising') }}">Все</a>{% for value,label in statuses.items() %}<a class="{% if selected_status == value %}active{% endif %}" href="{{ url_for('admin_advertising', status=value) }}">{{ label }}</a>{% endfor %}</nav>
+    {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <nav class="application-filters" aria-label="Фильтр рекламных заявок"><a class="{% if not selected_status %}active{% endif %}" href="{{ url_for('admin_advertising') }}"{% if not selected_status %} aria-current="page"{% endif %}>Все</a>{% for value,label in statuses.items() %}<a class="{% if selected_status == value %}active{% endif %}" href="{{ url_for('admin_advertising', status=value) }}"{% if selected_status == value %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
     <section class="application-admin-list">
     {% for item in advertising_requests %}
         <article class="application-admin-card advertising-admin-card">
-            <div>
+            <div class="advertising-admin-overview">
                 <p class="eyebrow">Заявка № {{ item.id }} · {{ statuses[item.status] }}</p>
                 <h2>{{ item.company }} — {{ formats[item.format].title }}</h2>
                 <p class="advertising-placement-state{% if item.placement_state == 'Активна в ротации' %} is-live{% endif %}">{{ item.placement_state }}</p>
@@ -31,18 +31,45 @@
                 <details><summary>Исходная заявка</summary>{% if item.preferred_dates %}<h3>Желаемые даты</h3><p>{{ item.preferred_dates }}</p>{% endif %}<h3>Комментарий</h3><p class="preserve-lines">{{ item.comment or 'Не указан' }}</p></details>
             </div>
             <form method="post" action="{{ url_for('update_advertising_request', request_id=item.id) }}" class="application-admin-form advertising-publish-form">
-                <label>Формат<select name="format">{% for value,data in formats.items() %}<option value="{{ value }}" {% if item.format == value %}selected{% endif %}>{{ data.title }}</option>{% endfor %}</select></label>
-                <label>Раздел<select name="category">{% for value,label in categories.items() %}<option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                <label>Города <span>Через запятую; пусто — без ограничения</span><input name="cities" maxlength="300" value="{{ item.cities or '' }}"></label>
-                <label>Целевая ссылка<input name="target_url" maxlength="500" value="{{ item.target_url }}" required></label>
-                <label>Заголовок<input name="headline" maxlength="120" value="{{ item.headline or '' }}" placeholder="По умолчанию — название компании"></label>
-                <label>Текст объявления<textarea name="ad_text" maxlength="320" rows="3" placeholder="Коротко опишите предложение">{{ item.ad_text or '' }}</textarea></label>
-                <label>Текст кнопки<input name="button_label" maxlength="40" value="{{ item.button_label or 'Подробнее' }}" required></label>
-                <div class="advertising-date-fields"><label>Начало показа<input name="start_date" type="date" value="{{ item.start_date or '' }}"></label><label>Окончание показа<input name="end_date" type="date" value="{{ item.end_date or '' }}"></label></div>
-                <p class="form-note advertising-admin-hint">Для «Продвижения объявления» укажите внутреннюю ссылку вида <code>/animal/1</code>, <code>/service/1</code> или <code>/food/1</code>.</p>
-                <label>Статус<select name="status">{% for value,label in statuses.items() %}<option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-                <label>Заметка администратора<textarea name="admin_note" maxlength="2000" rows="3">{{ item.admin_note }}</textarea></label>
-                <button type="submit">Сохранить и применить</button>
+                <div class="advertising-form-heading">
+                    <div><p class="eyebrow">Редактор размещения</p><h3>Настройки рекламного блока</h3></div>
+                    <p>Проверьте площадку, подготовьте текст и задайте период показа.</p>
+                </div>
+
+                <fieldset class="advertising-form-section">
+                    <legend><span>1</span> Размещение</legend>
+                    <div class="advertising-form-grid">
+                        <label for="ad-format-{{ item.id }}">Формат<select id="ad-format-{{ item.id }}" name="format">{% for value,data in formats.items() %}<option value="{{ value }}" {% if item.format == value %}selected{% endif %}>{{ data.title }}</option>{% endfor %}</select></label>
+                        <label for="ad-category-{{ item.id }}">Раздел<select id="ad-category-{{ item.id }}" name="category">{% for value,label in categories.items() %}<option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                        <label class="ad-field--full" for="ad-cities-{{ item.id }}">Города <span>Через запятую; пусто — без ограничения</span><input id="ad-cities-{{ item.id }}" name="cities" maxlength="300" value="{{ item.cities or '' }}"></label>
+                        <label class="ad-field--full" for="ad-target-{{ item.id }}">Целевая ссылка<input id="ad-target-{{ item.id }}" name="target_url" maxlength="500" value="{{ item.target_url }}" aria-describedby="ad-target-hint-{{ item.id }}" required></label>
+                        <p id="ad-target-hint-{{ item.id }}" class="form-note advertising-admin-hint"><strong>Для продвижения объявления:</strong> используйте внутреннюю ссылку вида <code>/animal/1</code>, <code>/service/1</code> или <code>/food/1</code>.</p>
+                    </div>
+                </fieldset>
+
+                <fieldset class="advertising-form-section">
+                    <legend><span>2</span> Креатив</legend>
+                    <div class="advertising-form-grid">
+                        <label for="ad-headline-{{ item.id }}">Заголовок<input id="ad-headline-{{ item.id }}" name="headline" maxlength="120" value="{{ item.headline or '' }}" placeholder="По умолчанию — название компании"></label>
+                        <label for="ad-button-{{ item.id }}">Текст кнопки<input id="ad-button-{{ item.id }}" name="button_label" maxlength="40" value="{{ item.button_label or 'Подробнее' }}" required></label>
+                        <label class="ad-field--full" for="ad-text-{{ item.id }}">Текст объявления<textarea id="ad-text-{{ item.id }}" name="ad_text" maxlength="320" rows="4" placeholder="Коротко опишите предложение">{{ item.ad_text or '' }}</textarea></label>
+                    </div>
+                </fieldset>
+
+                <fieldset class="advertising-form-section">
+                    <legend><span>3</span> Публикация</legend>
+                    <div class="advertising-form-grid">
+                        <label for="ad-start-{{ item.id }}">Начало показа<input id="ad-start-{{ item.id }}" name="start_date" type="date" value="{{ item.start_date or '' }}"></label>
+                        <label for="ad-end-{{ item.id }}">Окончание показа<input id="ad-end-{{ item.id }}" name="end_date" type="date" value="{{ item.end_date or '' }}"></label>
+                        <label class="ad-field--full" for="ad-status-{{ item.id }}">Статус<select id="ad-status-{{ item.id }}" name="status">{% for value,label in statuses.items() %}<option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                        <label class="ad-field--full" for="ad-note-{{ item.id }}">Заметка администратора<textarea id="ad-note-{{ item.id }}" name="admin_note" maxlength="2000" rows="3" placeholder="Внутренняя заметка — пользователи её не увидят">{{ item.admin_note }}</textarea></label>
+                    </div>
+                </fieldset>
+
+                <div class="advertising-form-actions">
+                    <p>После сохранения активное размещение обновится на сайте автоматически.</p>
+                    <button type="submit" aria-label="Сохранить и применить изменения заявки № {{ item.id }}">Сохранить и применить</button>
+                </div>
             </form>
         </article>
     {% else %}
