@@ -145,6 +145,28 @@ class AdvertisingPublicationTests(unittest.TestCase):
         connection.close()
         self.assertEqual(request_count, 0)
 
+    def test_intentionally_termless_animal_survives_database_initialization(self):
+        owner_id = self.create_user(email="termless-owner@gmail.com")
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        cursor = connection.execute(
+            """INSERT INTO animals
+               (type, breed, status, user_id, deal_status, created_at, expires_at)
+               VALUES ('Кот', 'Тестовая порода', 'active', ?, 'open', ?, NULL)""",
+            (owner_id, zooland.utcnow()),
+        )
+        animal_id = cursor.lastrowid
+        connection.commit()
+        connection.close()
+
+        zooland.init_db()
+
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        expires_at = connection.execute(
+            "SELECT expires_at FROM animals WHERE id=?", (animal_id,)
+        ).fetchone()[0]
+        connection.close()
+        self.assertIsNone(expires_at)
+
     def test_authenticated_submission_uses_session_owner_and_profile_email(self):
         owner_id = self.create_user(email="profile-owner@gmail.com")
         other_id = self.create_user(email="other@gmail.com", name="Другой пользователь")

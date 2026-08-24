@@ -599,6 +599,7 @@ def init_db():
     cursor.execute("UPDATE users SET email_verified=1 WHERE email_verified IS NULL")
     cursor.execute("UPDATE users SET session_version=1 WHERE session_version IS NULL")
     columns = {row[1] for row in cursor.execute("PRAGMA table_info(animals)")}
+    animal_expires_at_added = "expires_at" not in columns
     migrations = {
         "user_id": "INTEGER", "guest_token": "TEXT", "status": "TEXT DEFAULT 'active'",
         "created_at": "TEXT", "expires_at": "TEXT", "archived_at": "TEXT",
@@ -659,7 +660,10 @@ def init_db():
     now = utcnow()
     cursor.execute("UPDATE animals SET status='active' WHERE status IS NULL")
     cursor.execute("UPDATE animals SET created_at=? WHERE created_at IS NULL", (now,))
-    cursor.execute("UPDATE animals SET expires_at=? WHERE expires_at IS NULL", (iso_after_days(FREE_DAYS),))
+    # Заполняем срок только один раз при добавлении колонки в старую базу.
+    # Позже NULL может намеренно означать тестовое размещение без срока.
+    if animal_expires_at_added:
+        cursor.execute("UPDATE animals SET expires_at=? WHERE expires_at IS NULL", (iso_after_days(FREE_DAYS),))
     cursor.execute("UPDATE services SET created_at=? WHERE created_at IS NULL", (now,))
     cursor.execute("UPDATE food SET created_at=? WHERE created_at IS NULL", (now,))
     connection.commit()
