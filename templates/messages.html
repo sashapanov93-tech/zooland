@@ -20,12 +20,7 @@
     </div>
 </header>
 <main class="account-page">
-    <nav class="account-tabs" aria-label="Разделы кабинета">
-        <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
-        <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
-        <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}">Избранное</a>
-        <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
-    </nav>
+    {% include "_account_tabs.html" %}
     <section class="account-hero">
         <p class="eyebrow">Личный кабинет</p>
         <h1>Сообщения</h1>

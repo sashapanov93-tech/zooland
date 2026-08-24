@@ -168,6 +168,12 @@ ADVERTISING_CATEGORIES = {
     "all": "Весь сайт", "animals": "Животные", "services": "Услуги",
     "food": "Зоотовары и питание", "accessories": "Аксессуары",
 }
+ADVERTISING_BUDGET_OPTIONS = (
+    "До 10 000 ₽", "10 000–30 000 ₽", "30 000–70 000 ₽", "Более 70 000 ₽", "Нужно рассчитать",
+)
+ADVERTISING_OWNER_EDITABLE_STATUSES = frozenset({"new", "discussing", "waiting_materials", "ready", "rejected"})
+ADVERTISING_OWNER_FINISHABLE_STATUSES = frozenset({"new", "discussing", "waiting_materials", "ready", "active"})
+ADVERTISING_OWNER_RESUBMITTABLE_STATUSES = frozenset({"completed", "rejected"})
 ADVERTISING_METRICS = frozenset({"impression", "click"})
 VACANCIES = {
     "listing-moderator": {
@@ -327,7 +333,7 @@ def apply_security_headers(response):
         "img-src 'self' data:; connect-src 'self'; script-src 'self' 'unsafe-inline'; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com",
     )
-    if request.path.startswith(("/password", "/verify-email", "/settings", "/admin")):
+    if request.path.startswith(("/account", "/password", "/verify-email", "/settings", "/admin")):
         response.headers.setdefault("Cache-Control", "no-store")
     if IS_PRODUCTION:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
@@ -514,7 +520,7 @@ def init_db():
     )""")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_job_applications_status ON job_applications(status, created_at DESC)")
     cursor.execute("""CREATE TABLE IF NOT EXISTS advertising_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, format TEXT NOT NULL,
+        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, format TEXT NOT NULL,
         contact_name TEXT NOT NULL, company TEXT NOT NULL, inn TEXT NOT NULL,
         email TEXT NOT NULL, phone TEXT, telegram TEXT, target_url TEXT NOT NULL,
         category TEXT NOT NULL DEFAULT 'all', cities TEXT, preferred_dates TEXT,
@@ -528,6 +534,7 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_advertising_requests_status ON advertising_requests(status, created_at DESC)")
     advertising_columns = {row[1] for row in cursor.execute("PRAGMA table_info(advertising_requests)")}
     for column, definition in {
+        "user_id": "INTEGER",
         "headline": "TEXT NOT NULL DEFAULT ''",
         "ad_text": "TEXT NOT NULL DEFAULT ''",
         "button_label": "TEXT NOT NULL DEFAULT 'Подробнее'",
@@ -536,6 +543,8 @@ def init_db():
     }.items():
         if column not in advertising_columns:
             cursor.execute(f"ALTER TABLE advertising_requests ADD COLUMN {column} {definition}")
+    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_advertising_requests_user
+                      ON advertising_requests(user_id, created_at DESC)""")
     # Старые активные заявки сразу получают безопасный текстовый креатив.
     # Контактные данные и внутренний комментарий в публичный блок не попадают.
     cursor.execute("""UPDATE advertising_requests
@@ -867,6 +876,79 @@ def advertising_metrics(request_id):
     ).fetchall()
     totals = {row["metric"]: int(row["total"] or 0) for row in rows}
     return {"impressions": totals.get("impression", 0), "clicks": totals.get("click", 0)}
+
+
+def advertising_placement_state(advertisement, today=None):
+    """Объясняет менеджеру и владельцу, показывается ли размещение сейчас."""
+    today = today or advertising_today()
+    if advertisement.get("status") != "active":
+        return "Не показывается"
+    if advertisement.get("start_date") and advertisement["start_date"] > today:
+        return "Запланирована"
+    if advertisement.get("end_date") and advertisement["end_date"] < today:
+        return "Срок завершён"
+    if not advertisement.get("safe_target_url"):
+        return "Некорректная целевая ссылка"
+    if advertisement.get("format") == "promoted-listing" and not promoted_target_is_public(advertisement):
+        return "Целевое объявление недоступно"
+    return "Активна в ротации"
+
+
+def advertising_request_form_data(form, user):
+    """Нормализует только поля, которые рекламодатель вправе заполнять."""
+    telegram_input = form.get("telegram", "").strip()
+    return {
+        "format": form.get("format", "").strip(),
+        "contact_name": form.get("contact_name", "").strip(),
+        "company": form.get("company", "").strip(),
+        "inn": re.sub(r"\D", "", form.get("inn", "")),
+        # Email и владелец всегда берутся из подтверждённой сессии, а не формы.
+        "email": (user["email"] or "").strip().casefold(),
+        "phone": form.get("phone", "").strip(),
+        "telegram": normalize_telegram(telegram_input) if telegram_input else "",
+        "telegram_input": telegram_input,
+        "target_url": form.get("target_url", "").strip(),
+        "category": form.get("category", "all").strip(),
+        "cities": form.get("cities", "").strip(),
+        "preferred_dates": form.get("preferred_dates", "").strip(),
+        "budget": form.get("budget", "").strip(),
+        "comment": form.get("comment", "").strip(),
+    }
+
+
+def advertising_request_validation_errors(data, *, consent=True):
+    """Единые правила для новой заявки и разрешённого владельцу редактирования."""
+    errors = []
+    if data["format"] not in ADVERTISING_FORMATS:
+        errors.append("выберите рекламный формат")
+    if not 2 <= len(data["contact_name"]) <= 80:
+        errors.append("укажите контактное лицо")
+    if not 2 <= len(data["company"]) <= 120:
+        errors.append("укажите компанию или бренд")
+    if len(data["inn"]) not in {10, 12}:
+        errors.append("ИНН должен содержать 10 или 12 цифр")
+    # Домен уже проверяется и подтверждается при регистрации. Здесь оставляем
+    # только проверку структуры, чтобы не блокировать старый подтверждённый
+    # аккаунт при последующем изменении списка поддерживаемых почтовых служб.
+    if not re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", data["email"]):
+        errors.append("в профиле должен быть указан корректный email")
+    if data["phone"] and not re.fullmatch(r"[+0-9()\-\s]{7,30}", data["phone"]):
+        errors.append("проверьте номер телефона")
+    if data["telegram_input"] and not data["telegram"]:
+        errors.append("укажите корректный Telegram username")
+    if not valid_advertising_target(data["target_url"]):
+        errors.append("укажите корректную ссылку на объявление или сайт")
+    if data["category"] not in ADVERTISING_CATEGORIES:
+        errors.append("выберите раздел показа")
+    if len(data["cities"]) > 300 or len(data["preferred_dates"]) > 160:
+        errors.append("сократите города или желаемые даты")
+    if data["budget"] not in ADVERTISING_BUDGET_OPTIONS:
+        errors.append("выберите предполагаемый бюджет")
+    if len(data["comment"]) > 2000:
+        errors.append("комментарий не должен превышать 2000 символов")
+    if not consent:
+        errors.append("подтвердите согласие на обработку данных")
+    return errors
 
 
 ACTION_RATE_LIMITS = {
@@ -2420,72 +2502,183 @@ def support():
 def advertising():
     user = current_user()
     if request.method == "POST":
-        ad_format = request.form.get("format", "").strip()
-        contact_name = request.form.get("contact_name", "").strip()
-        company = request.form.get("company", "").strip()
-        inn = re.sub(r"\D", "", request.form.get("inn", ""))
-        email = request.form.get("email", "").strip().casefold()
-        phone = request.form.get("phone", "").strip()
-        telegram_raw = request.form.get("telegram", "").strip()
-        telegram = normalize_telegram(telegram_raw) if telegram_raw else ""
-        target_url = request.form.get("target_url", "").strip()
-        category = request.form.get("category", "all").strip()
-        cities = request.form.get("cities", "").strip()
-        preferred_dates = request.form.get("preferred_dates", "").strip()
-        budget = request.form.get("budget", "").strip()
-        comment = request.form.get("comment", "").strip()
-        consent = request.form.get("personal_data_consent") == "yes"
-        budget_options = {"До 10 000 ₽", "10 000–30 000 ₽", "30 000–70 000 ₽", "Более 70 000 ₽", "Нужно рассчитать"}
-        errors = []
-        if ad_format not in ADVERTISING_FORMATS:
-            errors.append("выберите рекламный формат")
-        if not 2 <= len(contact_name) <= 80:
-            errors.append("укажите контактное лицо")
-        if not 2 <= len(company) <= 120:
-            errors.append("укажите компанию или бренд")
-        if len(inn) not in {10, 12}:
-            errors.append("ИНН должен содержать 10 или 12 цифр")
-        if not is_valid_email(email):
-            errors.append("укажите корректный email")
-        if phone and not re.fullmatch(r"[+0-9()\-\s]{7,30}", phone):
-            errors.append("проверьте номер телефона")
-        if telegram_raw and not telegram:
-            errors.append("укажите корректный Telegram username")
-        if not valid_advertising_target(target_url):
-            errors.append("укажите корректную ссылку на объявление или сайт")
-        if category not in ADVERTISING_CATEGORIES:
-            errors.append("выберите раздел показа")
-        if len(cities) > 300 or len(preferred_dates) > 160:
-            errors.append("сократите города или желаемые даты")
-        if budget not in budget_options:
-            errors.append("выберите предполагаемый бюджет")
-        if len(comment) > 2000:
-            errors.append("комментарий не должен превышать 2000 символов")
-        if not consent:
-            errors.append("подтвердите согласие на обработку данных")
+        if not user:
+            flash("Войдите в аккаунт, чтобы подать рекламную заявку и управлять ею.", "error")
+            return redirect(url_for("login"))
+        data = advertising_request_form_data(request.form, user)
+        errors = advertising_request_validation_errors(
+            data, consent=request.form.get("personal_data_consent") == "yes"
+        )
         if errors:
             flash("Не удалось отправить заявку: " + "; ".join(errors) + ".", "error")
-        elif not allow_sensitive_action("advertising", email):
+        elif not allow_sensitive_action("advertising", str(user["id"])):
             flash("Слишком много заявок. Попробуйте отправить её позже.", "error")
         else:
             now = utcnow()
             cursor = db().execute("""INSERT INTO advertising_requests
-                (format, contact_name, company, inn, email, phone, telegram, target_url, category, cities,
+                (user_id, format, contact_name, company, inn, email, phone, telegram, target_url, category, cities,
                  preferred_dates, budget, comment, consent_at, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (ad_format, contact_name, company, inn, email, phone, telegram, target_url, category, cities,
-                 preferred_dates, budget, comment, now, now, now))
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (user["id"], data["format"], data["contact_name"], data["company"], data["inn"], data["email"],
+                 data["phone"], data["telegram"], data["target_url"], data["category"], data["cities"],
+                 data["preferred_dates"], data["budget"], data["comment"], now, now, now))
             db().commit()
             request_id = cursor.lastrowid
             send_email(
-                SUPPORT_EMAIL, f"[ZooLand реклама] Новая заявка #{request_id}: {ADVERTISING_FORMATS[ad_format]['title']}",
-                f"Компания: {company}\nКонтакт: {contact_name}\nEmail: {email}\nБюджет: {budget}\n\nЗаявка сохранена в панели администратора.",
-                reply_to=email,
+                SUPPORT_EMAIL, f"[ZooLand реклама] Новая заявка #{request_id}: {ADVERTISING_FORMATS[data['format']]['title']}",
+                f"Компания: {data['company']}\nКонтакт: {data['contact_name']}\nEmail: {data['email']}\nБюджет: {data['budget']}\n\nЗаявка сохранена в панели администратора.",
+                reply_to=data["email"],
             )
             flash(f"Заявка № {request_id} принята. Мы проверим тематику и свяжемся с вами для согласования.", "success")
-            return redirect(url_for("advertising", sent="1"))
+            return redirect(url_for("account_advertising"))
     return render_template("advertising.html", formats=ADVERTISING_FORMATS,
-                           categories=ADVERTISING_CATEGORIES, user=user)
+                           categories=ADVERTISING_CATEGORIES, budget_options=ADVERTISING_BUDGET_OPTIONS, user=user)
+
+
+ADVERTISING_OWNER_COLUMNS = """id, user_id, format, contact_name, company, inn, email, phone, telegram,
+    target_url, category, cities, preferred_dates, budget, comment, headline, ad_text, button_label,
+    start_date, end_date, status, consent_at, created_at, updated_at"""
+
+
+@app.route("/account/advertising")
+@login_required
+def account_advertising():
+    user = current_user()
+    rows = db().execute(
+        f"""SELECT {ADVERTISING_OWNER_COLUMNS}
+              FROM advertising_requests
+             WHERE user_id=?
+             ORDER BY created_at DESC, id DESC""",
+        (user["id"],),
+    ).fetchall()
+    advertisements = []
+    today = advertising_today()
+    for row in rows:
+        item = dict(row)
+        item["metrics"] = advertising_metrics(item["id"])
+        impressions = item["metrics"]["impressions"]
+        item["metrics"]["ctr"] = round(item["metrics"]["clicks"] * 100 / impressions, 1) if impressions else 0.0
+        item["safe_target_url"] = valid_advertising_target(item.get("target_url"))
+        item["placement_state"] = advertising_placement_state(item, today)
+        advertisements.append(item)
+    totals = {
+        "requests": len(advertisements),
+        "total": len(advertisements),
+        "active": sum(item["placement_state"] == "Активна в ротации" for item in advertisements),
+        "impressions": sum(item["metrics"]["impressions"] for item in advertisements),
+        "clicks": sum(item["metrics"]["clicks"] for item in advertisements),
+    }
+    totals["ctr"] = round(totals["clicks"] * 100 / totals["impressions"], 1) if totals["impressions"] else 0.0
+    return render_template(
+        "account_advertising.html", advertisements=advertisements, advertising_requests=advertisements,
+        advertising_totals=totals,
+        formats=ADVERTISING_FORMATS, categories=ADVERTISING_CATEGORIES, statuses=ADVERTISING_STATUSES,
+        tab="advertising",
+    )
+
+
+def owner_advertising_request(request_id, user_id):
+    return db().execute(
+        f"SELECT {ADVERTISING_OWNER_COLUMNS} FROM advertising_requests WHERE id=? AND user_id=?",
+        (request_id, user_id),
+    ).fetchone()
+
+
+@app.route("/account/advertising/<int:request_id>/edit", methods=["GET", "POST"])
+@login_required
+def account_advertising_edit(request_id):
+    user = current_user()
+    existing_row = owner_advertising_request(request_id, user["id"])
+    if not existing_row:
+        abort(404)
+    existing = dict(existing_row)
+    if existing["status"] not in ADVERTISING_OWNER_EDITABLE_STATUSES:
+        flash("Активное или завершённое размещение нельзя редактировать. При необходимости остановите его и отправьте заново.", "error")
+        return redirect(url_for("account_advertising"))
+    if request.method == "POST":
+        data = advertising_request_form_data(request.form, user)
+        errors = advertising_request_validation_errors(data)
+        if not errors:
+            editable_statuses = tuple(sorted(ADVERTISING_OWNER_EDITABLE_STATUSES))
+            placeholders = ", ".join("?" for _ in editable_statuses)
+            cursor = db().execute(
+                f"""UPDATE advertising_requests
+                        SET format=?, contact_name=?, company=?, inn=?, email=?, phone=?, telegram=?,
+                            target_url=?, category=?, cities=?, preferred_dates=?, budget=?, comment=?,
+                            status='new', updated_at=?
+                      WHERE id=? AND user_id=? AND status IN ({placeholders})""",
+                (data["format"], data["contact_name"], data["company"], data["inn"], data["email"],
+                 data["phone"], data["telegram"], data["target_url"], data["category"], data["cities"],
+                 data["preferred_dates"], data["budget"], data["comment"], utcnow(), request_id, user["id"],
+                 *editable_statuses),
+            )
+            db().commit()
+            if cursor.rowcount == 1:
+                flash(f"Заявка № {request_id} обновлена и снова отправлена на проверку.", "success")
+                return redirect(url_for("account_advertising"))
+            flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
+            return redirect(url_for("account_advertising"))
+        flash("Не удалось обновить заявку: " + "; ".join(errors) + ".", "error")
+        existing.update({key: value for key, value in data.items() if key != "telegram_input"})
+    return render_template(
+        "account_advertising_edit.html", advertisement=existing, formats=ADVERTISING_FORMATS,
+        categories=ADVERTISING_CATEGORIES, statuses=ADVERTISING_STATUSES,
+        budget_options=ADVERTISING_BUDGET_OPTIONS, tab="advertising",
+    )
+
+
+@app.route("/account/advertising/<int:request_id>/finish", methods=["POST"])
+@login_required
+def account_advertising_finish(request_id):
+    user = current_user()
+    existing_row = owner_advertising_request(request_id, user["id"])
+    if not existing_row:
+        abort(404)
+    existing = dict(existing_row)
+    if existing["status"] not in ADVERTISING_OWNER_FINISHABLE_STATUSES:
+        flash("Эту заявку уже нельзя отозвать или остановить.", "error")
+        return redirect(url_for("account_advertising"))
+    finishable_statuses = tuple(sorted(ADVERTISING_OWNER_FINISHABLE_STATUSES))
+    placeholders = ", ".join("?" for _ in finishable_statuses)
+    cursor = db().execute(
+        f"""UPDATE advertising_requests SET status='completed', updated_at=?
+              WHERE id=? AND user_id=? AND status IN ({placeholders})""",
+        (utcnow(), request_id, user["id"], *finishable_statuses),
+    )
+    db().commit()
+    if cursor.rowcount != 1:
+        flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
+    elif existing["status"] == "active":
+        flash(f"Показ рекламы по заявке № {request_id} остановлен.", "success")
+    else:
+        flash(f"Заявка № {request_id} отозвана.", "success")
+    return redirect(url_for("account_advertising"))
+
+
+@app.route("/account/advertising/<int:request_id>/resubmit", methods=["POST"])
+@login_required
+def account_advertising_resubmit(request_id):
+    user = current_user()
+    existing_row = owner_advertising_request(request_id, user["id"])
+    if not existing_row:
+        abort(404)
+    existing = dict(existing_row)
+    if existing["status"] not in ADVERTISING_OWNER_RESUBMITTABLE_STATUSES:
+        flash("Повторно отправить можно только завершённую или отклонённую заявку.", "error")
+        return redirect(url_for("account_advertising"))
+    resubmittable_statuses = tuple(sorted(ADVERTISING_OWNER_RESUBMITTABLE_STATUSES))
+    placeholders = ", ".join("?" for _ in resubmittable_statuses)
+    cursor = db().execute(
+        f"""UPDATE advertising_requests SET status='new', updated_at=?
+              WHERE id=? AND user_id=? AND status IN ({placeholders})""",
+        (utcnow(), request_id, user["id"], *resubmittable_statuses),
+    )
+    db().commit()
+    if cursor.rowcount == 1:
+        flash(f"Заявка № {request_id} снова отправлена на рассмотрение.", "success")
+    else:
+        flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
+    return redirect(url_for("account_advertising"))
 
 
 @app.route("/advertising/click/<int:request_id>")
@@ -2525,18 +2718,7 @@ def admin_advertising():
         item = dict(row)
         item["metrics"] = advertising_metrics(item["id"])
         item["safe_target_url"] = valid_advertising_target(item.get("target_url"))
-        if item["status"] != "active":
-            item["placement_state"] = "Не показывается"
-        elif item.get("start_date") and item["start_date"] > today:
-            item["placement_state"] = "Запланирована"
-        elif item.get("end_date") and item["end_date"] < today:
-            item["placement_state"] = "Срок завершён"
-        elif not item["safe_target_url"]:
-            item["placement_state"] = "Некорректная целевая ссылка"
-        elif item["format"] == "promoted-listing" and not promoted_target_is_public(item):
-            item["placement_state"] = "Целевое объявление недоступно"
-        else:
-            item["placement_state"] = "Активна в ротации"
+        item["placement_state"] = advertising_placement_state(item, today)
         requests.append(item)
     return render_template("admin_advertising.html", advertising_requests=requests,
                            formats=ADVERTISING_FORMATS, categories=ADVERTISING_CATEGORIES,

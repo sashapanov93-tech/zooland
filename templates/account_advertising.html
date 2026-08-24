@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Моя реклама — ZooLand</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-owner-ads-1') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="account-advertising-page">
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            <a class="back-link" href="{{ url_for('index') }}">К объявлениям</a>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-button">Выйти</button></form>
+        </div>
+    </div>
+</header>
+
+{% set owner_ads = advertisements|default([], true) %}
+{% set totals = advertising_totals|default({}, true) %}
+<main class="account-page">
+    {% include "_account_tabs.html" %}
+
+    <section class="account-hero advertising-owner-hero">
+        <div>
+            <p class="eyebrow">Личный кабинет</p>
+            <h1>Моя реклама</h1>
+            <p>Следите за согласованием, сроками размещения и результатами ваших рекламных кампаний.</p>
+        </div>
+        <a class="publish-button" href="{{ url_for('advertising', _anchor='advertising-request') }}">+ Подать заявку</a>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+
+    <section class="account-metrics advertising-owner-summary" aria-label="Сводка по рекламе">
+        <article class="account-metric"><span class="account-metric-label">Всего заявок</span><strong>{{ totals.total|default(owner_ads|length, true) }}</strong><small>за всё время</small></article>
+        <article class="account-metric"><span class="account-metric-label">Активные</span><strong>{{ totals.active|default(0, true) }}</strong><small>сейчас показываются</small></article>
+        <article class="account-metric"><span class="account-metric-label">Показы</span><strong>{{ totals.impressions|default(0, true) }}</strong><small>всего</small></article>
+        <article class="account-metric"><span class="account-metric-label">Переходы</span><strong>{{ totals.clicks|default(0, true) }}</strong><small>по рекламе</small></article>
+    </section>
+
+    <section class="account-section advertising-owner-section">
+        <div class="account-section-heading">
+            <div>
+                <h2>Рекламные заявки · {{ owner_ads|length }}</h2>
+                <p class="section-note">Статистика содержит только суммарные показы и переходы — без данных посетителей.</p>
+            </div>
+        </div>
+
+        <div class="advertising-owner-list">
+            {% for advertisement in owner_ads %}
+            {% set ad_status = advertisement.status|default('new', true) %}
+            {% set format_data = formats.get(advertisement.format, {}) %}
+            {% set ad_metrics = advertisement.metrics|default({}, true) %}
+            {% set impressions = ad_metrics.impressions|default(0, true)|int %}
+            {% set clicks = ad_metrics.clicks|default(0, true)|int %}
+            {% set ctr = (clicks * 100 / impressions) if impressions else 0 %}
+            {% set placement_state = advertisement.placement_state|default('', true) %}
+            {% set status_class = 'status-open' if ad_status == 'active' else ('status-completed' if ad_status == 'completed' else ('status-rejected' if ad_status == 'rejected' else 'status-pending')) %}
+            <article class="advertising-owner-card advertising-owner-status-{{ ad_status }}">
+                <div class="advertising-owner-card-main">
+                    <div class="advertising-owner-title-row">
+                        <div>
+                            <p class="eyebrow">Заявка № {{ advertisement.id }}</p>
+                            <h3>{{ advertisement.company|default('Без названия', true) }} — {{ format_data.get('title', advertisement.format) }}</h3>
+                        </div>
+                        <span class="listing-status-pill {{ status_class }}">{{ statuses.get(ad_status, ad_status) }}</span>
+                    </div>
+
+                    <p class="advertising-placement-state{% if ad_status == 'active' and ('ротац' in placement_state|lower or not placement_state) %} is-live{% endif %}">
+                        {% if placement_state %}{{ placement_state }}{% elif ad_status == 'active' %}Активна в ротации{% elif ad_status == 'completed' %}Показ завершён{% else %}Пока не показывается{% endif %}
+                    </p>
+
+                    <dl class="advertising-owner-details">
+                        <div><dt>Раздел</dt><dd>{{ categories.get(advertisement.category, advertisement.category)|default('Весь сайт', true) }}</dd></div>
+                        <div><dt>Города</dt><dd>{{ advertisement.cities|default('Без ограничения', true) }}</dd></div>
+                        <div><dt>Период</dt><dd>{% if advertisement.start_date or advertisement.end_date %}{{ advertisement.start_date|default('Сразу', true) }} — {{ advertisement.end_date|default('без ограничения', true) }}{% else %}После согласования{% endif %}</dd></div>
+                        <div><dt>Обновлена</dt><dd>{% if advertisement.updated_at %}{{ advertisement.updated_at[:16].replace('T', ' ') }}{% else %}—{% endif %}</dd></div>
+                    </dl>
+
+                    <dl class="advertising-owner-metrics" aria-label="Статистика заявки № {{ advertisement.id }}">
+                        <div><dt>Показы</dt><dd>{{ impressions }}</dd></div>
+                        <div><dt>Переходы</dt><dd>{{ clicks }}</dd></div>
+                        <div><dt>CTR</dt><dd>{{ '%.1f'|format(ctr) }}%</dd></div>
+                    </dl>
+
+                    <p class="advertising-owner-created">Подана {% if advertisement.created_at %}{{ advertisement.created_at[:16].replace('T', ' ') }}{% else %}—{% endif %}</p>
+                </div>
+
+                <div class="advertising-owner-actions">
+                    {% if advertisement.safe_target_url %}<a class="advertising-owner-link" href="{{ advertisement.safe_target_url }}" target="_blank" rel="noopener noreferrer">Открыть ссылку ↗</a>{% endif %}
+
+                    {% if ad_status == 'completed' %}
+                    <form method="post" action="{{ url_for('account_advertising_resubmit', request_id=advertisement.id) }}">
+                        <button class="advertising-owner-primary" type="submit">Подать повторно</button>
+                    </form>
+                    {% elif ad_status == 'rejected' %}
+                    <a class="advertising-owner-secondary" href="{{ url_for('account_advertising_edit', request_id=advertisement.id) }}">Исправить заявку</a>
+                    <form method="post" action="{{ url_for('account_advertising_resubmit', request_id=advertisement.id) }}">
+                        <button class="advertising-owner-primary" type="submit">Отправить без изменений</button>
+                    </form>
+                    {% else %}
+                        {% if ad_status != 'active' %}<a class="advertising-owner-secondary" href="{{ url_for('account_advertising_edit', request_id=advertisement.id) }}">Редактировать</a>{% endif %}
+                    <form method="post" action="{{ url_for('account_advertising_finish', request_id=advertisement.id) }}" onsubmit="return confirm('{% if ad_status == 'active' %}Остановить показ этой рекламы?{% else %}Отозвать эту рекламную заявку?{% endif %}');">
+                        <button class="advertising-owner-stop" type="submit">{% if ad_status == 'active' %}Остановить показ{% else %}Отозвать заявку{% endif %}</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </article>
+            {% else %}
+            <div class="empty-state advertising-owner-empty">
+                <div aria-hidden="true">📣</div>
+                <h3>Рекламных заявок пока нет</h3>
+                <p>Выберите подходящий формат и отправьте первую заявку. После этого она появится здесь.</p>
+                <a class="publish-button" href="{{ url_for('advertising', _anchor='advertising-request') }}">Выбрать формат</a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+</main>
+
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

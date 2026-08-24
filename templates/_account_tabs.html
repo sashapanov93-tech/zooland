@@ -1,0 +1,14 @@
+<nav class="account-tabs" aria-label="Разделы кабинета">
+    <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}"{% if tab == 'listings' %} aria-current="page"{% endif %}>Мои объявления</a>
+    <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}"{% if tab == 'messages' %} aria-current="page"{% endif %}>Сообщения</a>
+    <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}"{% if tab == 'favorites' %} aria-current="page"{% endif %}>Избранное</a>
+    <a href="{{ url_for('account_advertising') }}" class="{% if tab == 'advertising' %}active{% endif %}"{% if tab == 'advertising' %} aria-current="page"{% endif %}>Моя реклама</a>
+    <a href="{{ url_for('settings') }}" class="account-tab-wide-mobile {% if tab == 'settings' %}active{% endif %}"{% if tab == 'settings' %} aria-current="page"{% endif %}>Настройки</a>
+    {% if account_user and account_user.is_admin %}
+    <a href="{{ url_for('admin_moderation') }}">Модерация</a>
+    <a href="{{ url_for('admin_reports') }}">Жалобы</a>
+    <a href="{{ url_for('admin_users') }}">Пользователи</a>
+    <a href="{{ url_for('admin_job_applications') }}">Отклики</a>
+    <a class="account-tab-wide-mobile" href="{{ url_for('admin_advertising') }}">Заявки рекламы</a>
+    {% endif %}
+</nav>

@@ -23,13 +23,70 @@ class AdvertisingPublicationTests(unittest.TestCase):
         zooland._ban_count.clear()
         zooland._banned_until.clear()
         connection = zooland.sqlite3.connect(zooland.DB_NAME)
-        for table in ("advertising_daily_metrics", "advertising_requests", "services", "users"):
+        for table in (
+            "advertising_daily_metrics", "advertising_requests", "rate_limit_events",
+            "services", "users",
+        ):
             connection.execute(f"DELETE FROM {table}")
         connection.commit()
         connection.close()
         self.client = zooland.app.test_client()
 
-    def create_advertisement(self, **overrides):
+    def create_user(self, email="owner@gmail.com", name="Владелец", is_admin=0):
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        cursor = connection.execute(
+            """INSERT INTO users
+               (name, email, password_hash, created_at, email_verified, is_admin, session_version)
+               VALUES (?, ?, 'test-password-hash', ?, 1, ?, 1)""",
+            (name, email, zooland.utcnow(), is_admin),
+        )
+        connection.commit()
+        user_id = cursor.lastrowid
+        connection.close()
+        return user_id
+
+    def login_as(self, user_id):
+        with self.client.session_transaction() as session_data:
+            session_data.clear()
+            session_data["user_id"] = user_id
+            session_data["session_version"] = 1
+            session_data["csrf_token"] = "test-csrf-token"
+
+    def endpoint_url(self, endpoint, **values):
+        with zooland.app.test_request_context():
+            return zooland.url_for(endpoint, **values)
+
+    def valid_advertising_form(self, **overrides):
+        values = {
+            "csrf_token": "test-csrf-token",
+            "format": "homepage-banner",
+            "contact_name": "Алексей Рекламодатель",
+            "company": "Добрый бренд",
+            "inn": "1234567890",
+            "email": "forged-form@example.com",
+            "phone": "+79990000000",
+            "telegram": "kind_brand",
+            "target_url": "https://example.com/offer",
+            "category": "all",
+            "cities": "Москва",
+            "preferred_dates": "1–15 сентября",
+            "budget": "До 10 000 ₽",
+            "comment": "Хотим рассказать о полезном предложении владельцам питомцев.",
+            "personal_data_consent": "yes",
+        }
+        values.update(overrides)
+        return values
+
+    def advertisement_row(self, request_id):
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        connection.row_factory = zooland.sqlite3.Row
+        row = connection.execute(
+            "SELECT * FROM advertising_requests WHERE id=?", (request_id,)
+        ).fetchone()
+        connection.close()
+        return dict(row) if row else None
+
+    def create_advertisement(self, user_id=None, **overrides):
         now = zooland.utcnow()
         values = {
             "format": "homepage-banner",
@@ -56,6 +113,8 @@ class AdvertisingPublicationTests(unittest.TestCase):
             "start_date": None,
             "end_date": None,
         }
+        if user_id is not None:
+            values["user_id"] = user_id
         values.update(overrides)
         columns = ", ".join(values)
         placeholders = ", ".join("?" for _ in values)
@@ -68,6 +127,219 @@ class AdvertisingPublicationTests(unittest.TestCase):
         request_id = cursor.lastrowid
         connection.close()
         return request_id
+
+    def test_only_registered_users_can_open_and_submit_advertising_form(self):
+        response = self.client.get("/advertising")
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('href="/login', html)
+        self.assertNotIn('class="advertising-form"', html)
+
+        with self.client.session_transaction() as session_data:
+            session_data["csrf_token"] = "test-csrf-token"
+        response = self.client.post("/advertising", data=self.valid_advertising_form())
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], self.endpoint_url("login"))
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        request_count = connection.execute("SELECT COUNT(*) FROM advertising_requests").fetchone()[0]
+        connection.close()
+        self.assertEqual(request_count, 0)
+
+    def test_authenticated_submission_uses_session_owner_and_profile_email(self):
+        owner_id = self.create_user(email="profile-owner@gmail.com")
+        other_id = self.create_user(email="other@gmail.com", name="Другой пользователь")
+        self.login_as(owner_id)
+        response = self.client.post(
+            "/advertising",
+            data=self.valid_advertising_form(
+                user_id=str(other_id),
+                email="forged-contact@example.net",
+                company="Компания владельца",
+            ),
+        )
+        self.assertEqual(response.status_code, 302)
+        connection = zooland.sqlite3.connect(zooland.DB_NAME)
+        connection.row_factory = zooland.sqlite3.Row
+        row = connection.execute(
+            "SELECT user_id, email, company FROM advertising_requests"
+        ).fetchone()
+        connection.close()
+        self.assertIsNotNone(row)
+        self.assertEqual(row["user_id"], owner_id)
+        self.assertEqual(row["email"], "profile-owner@gmail.com")
+        self.assertEqual(row["company"], "Компания владельца")
+
+    def test_owner_dashboard_contains_only_owned_advertisements(self):
+        owner_id = self.create_user(email="owner@gmail.com")
+        other_id = self.create_user(email="other@gmail.com", name="Другой пользователь")
+        self.create_advertisement(user_id=owner_id, company="МОЯ-КАМПАНИЯ-XYZ")
+        self.create_advertisement(user_id=other_id, company="ЧУЖАЯ-КАМПАНИЯ-XYZ")
+        self.create_advertisement(company="СТАРАЯ-КАМПАНИЯ-БЕЗ-ВЛАДЕЛЬЦА-XYZ")
+        self.login_as(owner_id)
+
+        response = self.client.get(self.endpoint_url("account_advertising"))
+        html = response.get_data(as_text=True)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers.get("Cache-Control"), "no-store")
+        self.assertIn("МОЯ-КАМПАНИЯ-XYZ", html)
+        self.assertNotIn("ЧУЖАЯ-КАМПАНИЯ-XYZ", html)
+        self.assertNotIn("СТАРАЯ-КАМПАНИЯ-БЕЗ-ВЛАДЕЛЬЦА-XYZ", html)
+
+    def test_cross_owner_advertising_actions_return_404_without_changes(self):
+        owner_id = self.create_user(email="owner@gmail.com")
+        attacker_id = self.create_user(email="attacker@gmail.com", name="Другой пользователь")
+        request_id = self.create_advertisement(
+            user_id=owner_id,
+            status="completed",
+            admin_note="Только для администратора",
+        )
+        before = self.advertisement_row(request_id)
+        self.login_as(attacker_id)
+
+        response = self.client.get(
+            self.endpoint_url("account_advertising_edit", request_id=request_id)
+        )
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(self.advertisement_row(request_id), before)
+
+        actions = (
+            ("account_advertising_edit", self.valid_advertising_form(company="Попытка подмены")),
+            ("account_advertising_finish", {"csrf_token": "test-csrf-token"}),
+            ("account_advertising_resubmit", {"csrf_token": "test-csrf-token"}),
+        )
+        for endpoint, data in actions:
+            with self.subTest(endpoint=endpoint):
+                response = self.client.post(
+                    self.endpoint_url(endpoint, request_id=request_id), data=data
+                )
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(self.advertisement_row(request_id), before)
+
+    def test_owner_edit_updates_request_but_preserves_moderated_fields(self):
+        owner_id = self.create_user(email="profile-owner@gmail.com")
+        other_id = self.create_user(email="other@gmail.com", name="Другой пользователь")
+        request_id = self.create_advertisement(
+            user_id=owner_id,
+            email="profile-owner@gmail.com",
+            status="rejected",
+            admin_note="Замечание администратора",
+            headline="Проверенный заголовок",
+            ad_text="Проверенный рекламный текст",
+            button_label="Проверенная кнопка",
+            start_date="2026-09-01",
+            end_date="2026-09-30",
+        )
+        self.login_as(owner_id)
+        response = self.client.post(
+            self.endpoint_url("account_advertising_edit", request_id=request_id),
+            data=self.valid_advertising_form(
+                format="category-banner",
+                contact_name="Новое контактное лицо",
+                company="Обновлённый бренд",
+                inn="0987654321",
+                email="forged@example.net",
+                phone="+78880000000",
+                telegram="updated_brand",
+                target_url="https://example.org/new-offer",
+                category="services",
+                cities="Москва, Казань",
+                preferred_dates="Октябрь 2026",
+                budget="10 000–30 000 ₽",
+                comment="Обновлённая информация для повторной проверки.",
+                user_id=str(other_id),
+                status="active",
+                admin_note="Подменённая заметка",
+                headline="Подменённый заголовок",
+                ad_text="Подменённый рекламный текст",
+                button_label="Подменённая кнопка",
+                start_date="2027-01-01",
+                end_date="2027-12-31",
+            ),
+        )
+        self.assertEqual(response.status_code, 302)
+        row = self.advertisement_row(request_id)
+        self.assertEqual(row["user_id"], owner_id)
+        self.assertEqual(row["email"], "profile-owner@gmail.com")
+        self.assertEqual(row["status"], "new")
+        self.assertEqual(row["format"], "category-banner")
+        self.assertEqual(row["contact_name"], "Новое контактное лицо")
+        self.assertEqual(row["company"], "Обновлённый бренд")
+        self.assertEqual(row["inn"], "0987654321")
+        self.assertEqual(row["phone"], "+78880000000")
+        self.assertEqual(row["telegram"], "updated_brand")
+        self.assertEqual(row["target_url"], "https://example.org/new-offer")
+        self.assertEqual(row["category"], "services")
+        self.assertEqual(row["cities"], "Москва, Казань")
+        self.assertEqual(row["preferred_dates"], "Октябрь 2026")
+        self.assertEqual(row["budget"], "10 000–30 000 ₽")
+        self.assertEqual(row["comment"], "Обновлённая информация для повторной проверки.")
+        self.assertEqual(row["admin_note"], "Замечание администратора")
+        self.assertEqual(row["headline"], "Проверенный заголовок")
+        self.assertEqual(row["ad_text"], "Проверенный рекламный текст")
+        self.assertEqual(row["button_label"], "Проверенная кнопка")
+        self.assertEqual(row["start_date"], "2026-09-01")
+        self.assertEqual(row["end_date"], "2026-09-30")
+
+    def test_active_advertisement_cannot_be_edited_but_can_be_finished(self):
+        owner_id = self.create_user(email="owner@gmail.com")
+        request_id = self.create_advertisement(
+            user_id=owner_id,
+            email="owner@gmail.com",
+            status="active",
+            company="Опубликованный бренд",
+        )
+        self.login_as(owner_id)
+        response = self.client.post(
+            self.endpoint_url("account_advertising_edit", request_id=request_id),
+            data=self.valid_advertising_form(company="Несогласованное изменение"),
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], self.endpoint_url("account_advertising"))
+        self.assertEqual(self.advertisement_row(request_id)["company"], "Опубликованный бренд")
+        self.assertEqual(self.advertisement_row(request_id)["status"], "active")
+
+        response = self.client.post(
+            self.endpoint_url("account_advertising_finish", request_id=request_id),
+            data={"csrf_token": "test-csrf-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.advertisement_row(request_id)["status"], "completed")
+
+    def test_completed_advertisement_can_be_resubmitted_for_moderation(self):
+        owner_id = self.create_user(email="owner@gmail.com")
+        request_id = self.create_advertisement(
+            user_id=owner_id,
+            email="owner@gmail.com",
+            status="completed",
+            admin_note="Прошлая служебная заметка",
+        )
+        self.login_as(owner_id)
+        response = self.client.post(
+            self.endpoint_url("account_advertising_resubmit", request_id=request_id),
+            data={"csrf_token": "test-csrf-token"},
+        )
+        self.assertEqual(response.status_code, 302)
+        row = self.advertisement_row(request_id)
+        self.assertEqual(row["status"], "new")
+
+    def test_account_tabs_link_to_my_advertising(self):
+        owner_id = self.create_user(email="owner@gmail.com")
+        self.login_as(owner_id)
+        advertising_path = self.endpoint_url("account_advertising")
+        account_paths = (
+            self.endpoint_url("account"),
+            self.endpoint_url("messages_list"),
+            self.endpoint_url("favorites"),
+            self.endpoint_url("settings"),
+            advertising_path,
+        )
+        for path in account_paths:
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                html = response.get_data(as_text=True)
+                self.assertEqual(response.status_code, 200)
+                self.assertIn("Моя реклама", html)
+                self.assertIn(f'href="{advertising_path}"', html)
 
     def test_active_homepage_banner_is_public_and_private_fields_are_hidden(self):
         request_id = self.create_advertisement()

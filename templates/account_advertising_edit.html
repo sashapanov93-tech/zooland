@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Редактирование рекламной заявки — ZooLand</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-owner-ads-1') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="account-advertising-page">
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            <a class="back-link" href="{{ url_for('account_advertising') }}">К моей рекламе</a>
+            <form method="post" action="{{ url_for('logout') }}"><button class="link-button">Выйти</button></form>
+        </div>
+    </div>
+</header>
+
+{% set ad_status = advertisement.status|default('new', true) %}
+{% set available_budgets = budget_options|default(['До 10 000 ₽', '10 000–30 000 ₽', '30 000–70 000 ₽', 'Более 70 000 ₽', 'Нужно рассчитать'], true) %}
+{% set owner_email = account_user.email if account_user else advertisement.email|default('', true) %}
+<main class="account-page advertising-owner-edit-page">
+    {% include "_account_tabs.html" %}
+
+    <section class="account-hero advertising-owner-edit-hero">
+        <p class="eyebrow">Моя реклама · заявка № {{ advertisement.id }}</p>
+        <div class="advertising-owner-edit-title">
+            <div>
+                <h1>Редактирование заявки</h1>
+                <p>{{ advertisement.company|default('Без названия', true) }} · {{ statuses.get(ad_status, ad_status) }}</p>
+            </div>
+            <span class="listing-status-pill {% if ad_status == 'rejected' %}status-rejected{% else %}status-pending{% endif %}">{{ statuses.get(ad_status, ad_status) }}</span>
+        </div>
+    </section>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+
+    <div class="advertising-owner-edit-warning" role="note">
+        <span aria-hidden="true">!</span>
+        <div><strong>Изменения пройдут повторную проверку</strong><p>После сохранения заявка вернётся на согласование. Включить показ и изменить подготовленный публичный креатив может только администратор.</p></div>
+    </div>
+
+    <section class="advertising-owner-edit-card">
+        <div class="advertising-owner-edit-copy">
+            <p class="eyebrow">Данные заявки</p>
+            <h2>Проверьте информацию для размещения</h2>
+            <p>Измените формат, контакты или параметры показа. Служебный статус, текст рекламного блока и фактические даты публикации здесь недоступны.</p>
+        </div>
+
+        <form method="post" class="advertising-form advertising-owner-edit-form">
+            <label>Формат<select name="format" required>{% for value,item in formats.items() %}<option value="{{ value }}" {% if request.form.get('format', advertisement.format) == value %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label>
+            <label>Контактное лицо<input name="contact_name" maxlength="80" value="{{ request.form.get('contact_name', advertisement.contact_name|default('', true)) }}" autocomplete="name" required></label>
+            <label>Компания или бренд<input name="company" maxlength="120" value="{{ request.form.get('company', advertisement.company|default('', true)) }}" required></label>
+            <label>ИНН<input name="inn" inputmode="numeric" pattern="[0-9]{10}|[0-9]{12}" maxlength="12" value="{{ request.form.get('inn', advertisement.inn|default('', true)) }}" placeholder="10 или 12 цифр" required></label>
+            <label>Email аккаунта <span>Изменяется в настройках профиля</span><input name="email" type="email" value="{{ owner_email }}" autocomplete="email" readonly aria-readonly="true" required></label>
+            <label>Телефон <span>(необязательно)</span><input name="phone" maxlength="30" value="{{ request.form.get('phone', advertisement.phone|default('', true)) }}" autocomplete="tel"></label>
+            <label>Telegram <span>(необязательно)</span><input name="telegram" maxlength="40" value="{{ request.form.get('telegram', advertisement.telegram|default('', true)) }}" placeholder="@username"></label>
+            <label>Ссылка на объявление или сайт<input name="target_url" type="text" maxlength="500" value="{{ request.form.get('target_url', advertisement.target_url|default('', true)) }}" placeholder="https://..." required></label>
+            <label>Раздел показа<select name="category" required>{% for value,label in categories.items() %}<option value="{{ value }}" {% if request.form.get('category', advertisement.category|default('all', true)) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+            <label>Города <span>(необязательно)</span><input name="cities" maxlength="300" value="{{ request.form.get('cities', advertisement.cities|default('', true)) }}" placeholder="Например: Москва, Казань"></label>
+            <label>Желаемые даты <span>(необязательно)</span><input name="preferred_dates" maxlength="160" value="{{ request.form.get('preferred_dates', advertisement.preferred_dates|default('', true)) }}" placeholder="Например: 1–15 сентября"></label>
+            <label>Предполагаемый бюджет<select name="budget" required><option value="">Выберите бюджет</option>{% for value in available_budgets %}<option value="{{ value }}" {% if request.form.get('budget', advertisement.budget|default('', true)) == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+            <label class="full-row">Комментарий <span>(необязательно)</span><textarea name="comment" maxlength="2000" rows="6" placeholder="Что рекламируем и какого результата ожидаете">{{ request.form.get('comment', advertisement.comment|default('', true)) }}</textarea></label>
+
+            <div class="advertising-owner-edit-actions full-row">
+                <p>После сохранения заявка будет отправлена на повторную проверку.</p>
+                <div>
+                    <a class="advertising-owner-secondary" href="{{ url_for('account_advertising') }}">Отмена</a>
+                    <button type="submit">Сохранить и отправить на проверку</button>
+                </div>
+            </div>
+        </form>
+    </section>
+</main>
+
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
