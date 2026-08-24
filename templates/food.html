@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Зоопитание и товары — ZooLand</title>
+<title>{% if accessories %}Аксессуары{% else %}Зоопитание{% endif %} — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,6 +17,7 @@
             <a href="{{ url_for('index') }}">Объявления</a>
             <a href="{{ url_for('services_list') }}">Услуги</a>
             <a href="{{ url_for('food_list') }}">Зоопитание</a>
+            <a href="{{ url_for('accessories_list') }}">Аксессуары</a>
         </nav>
         {% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}
         <a class="publish-button" href="#food-publish" data-open-publish>+ Разместить товар</a>
@@ -25,20 +26,20 @@
 <main>
     <section class="hero">
         <div class="hero-content">
-            <p class="eyebrow">Зоопитание и товары</p>
-            <h1>Корм, лакомства,<br>игрушки и не только</h1>
-            <p class="hero-copy">Всё для ваших питомцев: корма, наполнители, амуниция и аксессуары. Размещение бесплатно.</p>
+            <p class="eyebrow">{% if accessories %}Аксессуары{% else %}Зоопитание и товары{% endif %}</p>
+            <h1>{% if accessories %}Всё для комфортной<br>жизни питомца{% else %}Корм, лакомства,<br>игрушки и не только{% endif %}</h1>
+            <p class="hero-copy">{% if accessories %}Амуниция, переноски, лежанки, игрушки, уход и другие аксессуары. Размещение бесплатно.{% else %}Корма, лакомства, наполнители и другие товары для питомцев. Размещение бесплатно.{% endif %}</p>
         </div>
     </section>
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
 
-    <section class="search-panel" aria-label="Поиск товаров">
+    <section class="search-panel" aria-label="Поиск">
         <form method="get" class="search-form">
             <label class="search-field"><span class="sr-only">Поиск</span><input type="search" name="q" value="{{ search }}" placeholder="Название товара или описание"></label>
             <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
             <select name="category" aria-label="Категория">
                 <option value="">Все категории</option>
-                {% for ft in food_types %}<option value="{{ ft }}" {% if selected_category == ft %}selected{% endif %}>{{ ft }}</option>{% endfor %}
+                {% for category in catalog_categories %}<option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category }}</option>{% endfor %}
             </select>
             <button type="submit">Найти</button>
         </form>
@@ -52,13 +53,14 @@
         <form class="add-form service-form" action="{{ url_for('add_food') }}" method="post" enctype="multipart/form-data">
             <select name="category" required>
                 <option value="">Категория</option>
-                {% for ft in food_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
+                <optgroup label="Зоопитание">{% for ft in food_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}</optgroup>
+                <optgroup label="Аксессуары">{% for category in accessory_types %}<option value="{{ category }}">{{ category }}</option>{% endfor %}</optgroup>
             </select>
             <input type="text" name="title" placeholder="Название (например, Корм Acana для собак)" required>
             <input type="text" name="city" list="cities" placeholder="Город" required>
             <input type="number" name="price" placeholder="Цена, ₽ (необязательно)">
             <textarea name="description" placeholder="Описание: состав, вес, состояние, условия передачи"></textarea>
-            <label class="file-input">Фото <input type="file" name="photo" accept="image/*"></label>
+            <label class="file-input">Фото — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
             <button type="submit">Опубликовать товар</button>
             <p class="form-note">Размещение бесплатное. Объявление активно 7 дней.</p>
         </form>
@@ -69,33 +71,40 @@
     </section>
 
     <section class="cards-section">
-        <div class="catalog-header"><div><p class="eyebrow">Каталог товаров</p><h2>Зоопитание рядом</h2><span class="result-count">Найдено: {{ food|length }}</span></div></div>
+        <div class="catalog-header"><div><p class="eyebrow">Каталог товаров</p><h2>{% if accessories %}Аксессуары рядом{% else %}Зоопитание рядом{% endif %}</h2><span class="result-count">Найдено: {{ food|length }}</span></div></div>
+        {% with advertisements=category_ads %}{% include "_advertising_banner.html" %}{% endwith %}
         <div class="cards">
             {% for item in food %}
-            <article class="card">
-                <a class="card-link" href="{{ url_for('food_detail', food_id=item.id) }}">
+            <article class="card{% if item.advertising_id %} card-promoted{% endif %}"{% if item.advertising_id %} data-advertisement-id="{{ item.advertising_id }}"{% endif %}>
+                {% if item.advertising_id %}<span class="promoted-label">Реклама · Продвигается</span>{% endif %}
+                {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
+                <a class="card-link" href="{{ url_for('advertising_click', request_id=item.advertising_id) if item.advertising_id else url_for('food_detail', food_id=item.id) }}"{% if item.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
                 {% endif %}
                 <div class="card-body">
-                    <div class="card-topline"><span>{{ item.category }}</span></div>
+                    <div class="card-topline"><span>{{ item.category }}</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
                     <h3>{{ item.title }}</h3>
                     {% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}
                     <p class="meta">{{ item.city or 'Город не указан' }}</p>
+                    <p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p>
                     <p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p>
                     <span class="card-more">Подробнее →</span>
                 </div>
                 </a>
-                {% if account_user and item.user_id != account_user.id %}<a class="contact-link card-contact" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
+                {% if account_user and item.user_id != account_user.id and 'chat' in methods %}<a class="contact-link card-contact" data-listing-metric="chat_click" data-listing-type="food" data-listing-id="{{ item.id }}" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
+                {% if 'telegram' in methods and item.owner_telegram %}<a class="contact-link card-contact telegram-card" data-listing-metric="telegram_click" data-listing-type="food" data-listing-id="{{ item.id }}" href="https://t.me/{{ item.owner_telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>{% endif %}
+                {% if account_user and item.user_id != account_user.id %}<form method="post" action="{{ url_for('toggle_favorite', listing_type='food', listing_id=item.id) }}" class="fav-form"><button type="submit" class="fav-btn {% if is_favorite('food', item.id) %}active{% endif %}" title="{% if is_favorite('food', item.id) %}Убрать из избранного{% else %}В избранное{% endif %}">♥</button></form>{% endif %}
             </article>
             {% else %}
-            <div class="empty-state"><div>🦴</div><h3>Товаров пока нет</h3><p>Станьте первым, кто разместит товар для питомцев.</p><a href="#food-publish" data-open-publish>Разместить товар</a></div>
+            <div class="empty-state"><div>{% if accessories %}🦮{% else %}🦴{% endif %}</div><h3>{% if accessories %}Аксессуаров пока нет{% else %}Товаров пока нет{% endif %}</h3><p>Станьте первым, кто разместит товар для питомцев.</p><a href="#food-publish" data-open-publish>Разместить товар</a></div>
             {% endfor %}
         </div>
     </section>
 </main>
 <datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist>
+{% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

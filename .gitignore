@@ -3,7 +3,10 @@ __pycache__/
 *.pyc
 *.log
 *.db
+static/uploads/
 .env
+.env.*
+!.env.example
 .vscode/
 .idea/
 sqlite3

@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"><title>Предпросмотр — ZooLand</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('admin_moderation') }}">← К модерации</a></div></header>
+<main class="detail-page">
+    <article class="detail-card admin-preview {% if revision %}admin-preview-revision{% endif %}">
+        <div class="detail-media">{% set photos=item.photo.split(',') if item.photo else [] %}{% if photos %}<img class="gallery-main" src="{{ url_for('static', filename='uploads/' + photos[0]) }}" alt="{{ title }}">{% else %}<div class="card-placeholder detail-placeholder">🐾</div>{% endif %}</div>
+        <div class="detail-body">
+            <p class="eyebrow">{% if revision %}Правки к опубликованной карточке{% else %}Предпросмотр · {{ {'animal':'Животное','service':'Услуга','food':'Товар'}[listing_type] }}{% endif %}</p>
+            <div class="detail-title-row"><h1>{{ title }}</h1>{% if revision %}<span class="listing-status-pill status-pending">Правки на проверке</span>{% else %}<span class="listing-status-pill status-pending">На модерации</span>{% endif %}</div>
+            <p class="detail-price">{% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p><p class="detail-meta">{{ item.city or 'Город не указан' }}</p>
+            {% if revision %}<aside class="listing-state-banner state-pending"><span class="listing-status-pill status-pending">Новая версия</span><div><strong>Посетители пока видят предыдущую опубликованную карточку</strong><p>После одобрения будут применены данные из этого предпросмотра.</p></div></aside>{% endif %}
+            <div class="detail-description"><h2>Описание</h2><p>{{ item.description or 'Не указано' }}</p></div>
+            <div class="owner-card"><h2>Данные для модерации</h2><p>Владелец: {{ owner.name if owner else 'Удалённый пользователь' }} · {{ owner.email if owner else '—' }}</p><p>Способы связи: {{ (item.contact_methods or 'phone,chat,telegram').replace('phone','телефон').replace('chat','сообщения').replace('telegram','Telegram') }}</p>{% if revision and revision.moderation_reason %}<p class="revision-reason"><b>Предыдущее замечание:</b> {{ revision.moderation_reason }}</p>{% elif item.moderation_reason %}<p class="revision-reason"><b>Текущая причина возврата:</b> {{ item.moderation_reason }}</p>{% endif %}</div>
+            <div class="moderation-actions">
+                {% if revision %}
+                <form method="post" action="{{ url_for('admin_approve_revision', revision_id=revision.id) }}"><button class="extend">Одобрить правки</button></form>
+                <form class="moderation-decision" method="post" action="{{ url_for('admin_reject_revision', revision_id=revision.id) }}"><label>Причина для владельца<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label><button class="revision-link">Вернуть правки на доработку</button></form>
+                {% else %}
+                {% if item.status == 'pending' %}<form method="post" action="{{ url_for('admin_approve_listing', listing_type=listing_type, listing_id=item.id) }}"><button class="extend">Одобрить</button></form>{% endif %}
+                {% if item.status in ('pending', 'active', 'rejected') %}<form class="moderation-decision" method="post" action="{{ url_for('return_listing_for_revision', listing_type=listing_type, listing_id=item.id) }}"><label>Причина для владельца<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label><button class="revision-link">Вернуть на доработку</button></form>{% endif %}
+                <form class="moderation-decision delete-decision" method="post" action="{{ url_for('admin_delete_listing', listing_type=listing_type, listing_id=item.id) }}" onsubmit="return confirm('Удалить объявление безвозвратно? Владельцу будет отправлена причина.');"><label>Причина удаления<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label><button class="danger">Удалить объявление</button></form>
+                {% endif %}
+            </div>
+        </div>
+    </article>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

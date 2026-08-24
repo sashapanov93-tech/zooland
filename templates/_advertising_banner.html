@@ -1,0 +1,15 @@
+{% if advertisements %}
+<section class="public-advertising" aria-label="Рекламное размещение">
+    {% for advertisement in advertisements %}
+    <article class="public-advertising-banner" data-advertisement-id="{{ advertisement.id }}">
+        <div class="public-advertising-mark" aria-hidden="true">{{ advertisement.company[:1]|upper }}</div>
+        <div class="public-advertising-copy">
+            <div class="public-advertising-meta"><span>Реклама</span><strong>{{ advertisement.company }}</strong></div>
+            <h2>{{ advertisement.headline }}</h2>
+            <p>{{ advertisement.ad_text }}</p>
+        </div>
+        <a class="public-advertising-action" href="{{ url_for('advertising_click', request_id=advertisement.id) }}" rel="sponsored nofollow noopener noreferrer">{{ advertisement.button_label }} <span aria-hidden="true">→</span></a>
+    </article>
+    {% endfor %}
+</section>
+{% endif %}

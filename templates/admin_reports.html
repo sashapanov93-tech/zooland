@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Жалобы — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_users') }}">Пользователи</a></div></div></header>
+<main class="account-page">
+    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Жалобы · {{ reports|length }}</h1><p>Проверьте объявление и выберите решение. При возврате или удалении владелец получит письмо с указанной причиной.</p></section>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <section class="account-section"><div class="account-list report-list">
+        {% for report in reports %}
+        <article class="account-item report-item">
+            <div class="report-content">
+                <p class="eyebrow">Жалоба на {{ {'animal':'животное','service':'услугу','food':'товар'}[report.listing_type] }}</p>
+                <strong>{{ report.listing_title }}</strong>
+                <p>Причина жалобы: <b>{{ report.reason }}</b> · от {{ report.reporter_name }}</p>
+                {% if report.comment %}<p class="report-comment">{{ report.comment }}</p>{% endif %}
+                <small>Получена {{ report.created_at[:16].replace('T', ' ') }} · статус: {{ {'active':'опубликовано','pending':'на модерации','rejected':'на доработке'}.get(report.listing_status, report.listing_status) }}</small>
+            </div>
+            <div class="report-actions">
+                <a class="preview-link" href="{{ url_for('admin_preview_listing', listing_type=report.listing_type, listing_id=report.listing_id) }}">Просмотреть</a>
+                <form class="moderation-decision" method="post" action="{{ url_for('return_listing_for_revision', listing_type=report.listing_type, listing_id=report.listing_id) }}">
+                    <input type="hidden" name="return_to" value="reports">
+                    <label>Причина для владельца<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label>
+                    <button class="revision-link" type="submit">Вернуть на доработку</button>
+                </form>
+                <form class="moderation-decision delete-decision" method="post" action="{{ url_for('admin_delete_listing', listing_type=report.listing_type, listing_id=report.listing_id) }}" onsubmit="return confirm('Удалить объявление безвозвратно? Владельцу будет отправлена причина.');">
+                    <input type="hidden" name="return_to" value="reports">
+                    <label>Причина удаления<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label>
+                    <button class="danger" type="submit">Удалить объявление</button>
+                </form>
+                <form method="post" action="{{ url_for('resolve_report', report_id=report.id) }}"><button type="submit">Закрыть жалобу</button></form>
+            </div>
+        </article>
+        {% else %}<p class="muted">Открытых жалоб нет.</p>{% endfor %}
+    </div></section>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

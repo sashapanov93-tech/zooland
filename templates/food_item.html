@@ -10,70 +10,72 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
+{% set outcome = item.deal_status or 'open' %}
+{% set is_final_outcome = outcome in final_outcome_statuses %}
 <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>{% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}<a class="back-link" href="{{ url_for('food_list') }}">← К товарам</a></div></header>
 <main class="detail-page">
     <article class="detail-card">
         <div class="detail-media">
-            {% if item.photo %}
-            <img src="{{ url_for('static', filename='uploads/' + item.photo) }}" alt="{{ item.title }}">
-            {% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🦴</div>
-            {% endif %}
+            {% set photos = item.photo.split(',') if item.photo else [] %}
+            {% if photos %}<div class="gallery"><img class="gallery-main" src="{{ url_for('static', filename='uploads/' + photos[0]) }}" alt="{{ item.title }}">{% if photos|length > 1 %}<div class="gallery-thumbs">{% for photo in photos %}<img src="{{ url_for('static', filename='uploads/' + photo) }}" alt="" class="gallery-thumb {% if loop.first %}active{% endif %}" onclick="this.parentElement.parentElement.querySelector('.gallery-main').src=this.src;this.parentElement.querySelectorAll('.gallery-thumb').forEach(t=>t.classList.remove('active'));this.classList.add('active');">{% endfor %}</div>{% endif %}</div>{% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🦴</div>{% endif %}
         </div>
         <div class="detail-body">
             <p class="eyebrow">{{ item.category }}</p>
-            <h1>{{ item.title }}</h1>
-            {% if item.price %}<p class="detail-price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}
+            <div class="detail-title-row"><h1>{{ item.title }}</h1><span class="listing-status-pill status-{{ outcome }}">{{ outcome_status_labels.get(outcome, 'Активно') }}</span></div>
+            {% if item.price %}<p class="detail-price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% else %}<p class="detail-price detail-price-negotiable">По договорённости</p>{% endif %}
             <p class="detail-meta">{{ item.city or 'Город не указан' }}</p>
-            <p class="detail-views">👁 {{ item.views_total or 0 }} просмотров</p>
-            <div class="detail-description">
-                <h2>Описание</h2>
-                <p>{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p>
-            </div>
-            <div class="owner-card">
+            <p class="detail-meta">Опубликовано {{ item.created_at|publication_date }}</p>
+            <p class="detail-views">👁 {{ views_today }} за сутки · {{ views_total }} всего</p>
+
+            {% if outcome != 'open' %}
+            <aside class="listing-state-banner state-{{ outcome }}"><span class="listing-status-pill status-{{ outcome }}">{{ outcome_status_labels.get(outcome, outcome) }}</span><div>{% if outcome == 'reserved' %}<strong>Товар временно в резерве</strong><p>Если сделка не состоится, продавец вернёт его в каталог.</p>{% else %}<strong>Товар продан</strong><p>Карточка скрыта из поиска и больше не принимает новые обращения{% if item.outcome_at %} · отмечено {{ item.outcome_at|publication_date }}{% endif %}.</p>{% endif %}</div></aside>
+            {% endif %}
+
+            {% if account_user and not my_item and not is_final_outcome %}<form method="post" action="{{ url_for('toggle_favorite', listing_type='food', listing_id=item.id) }}" class="fav-form detail-fav"><button type="submit" class="fav-btn {% if is_favorite('food', item.id) %}active{% endif %}" title="{% if is_favorite('food', item.id) %}Убрать из избранного{% else %}В избранное{% endif %}">♥ {% if is_favorite('food', item.id) %}В избранном{% else %}В избранное{% endif %}</button></form>{% endif %}
+
+            <div class="detail-description"><h2>Описание</h2><p>{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p></div>
+            <div class="owner-card {% if my_item %}owner-card-management{% elif is_final_outcome %}owner-card-closed{% endif %}">
+                {% if my_item %}
+                <h2>Управление товаром</h2>
+                <p class="owner-hint">Изменения в описании, цене, фото и контактах сначала проверяются модератором.</p>
+                <div class="owner-listing-actions"><a class="detail-owner-edit" href="{{ url_for('edit_food', food_id=item.id) }}">Редактировать товар</a></div>
+                {% if is_final_outcome %}
+                <form method="post" action="{{ url_for('set_listing_outcome', listing_type='food', listing_id=item.id) }}" class="outcome-form outcome-form-detail"><input type="hidden" name="deal_status" value="open"><p class="outcome-form-note">Повторная публикация сначала пройдёт модерацию.</p><button type="submit" class="settings-save">Опубликовать снова</button></form>
+                {% else %}
+                <form method="post" action="{{ url_for('set_listing_outcome', listing_type='food', listing_id=item.id) }}" class="outcome-form outcome-form-detail"><label>Статус товара<select name="deal_status">{% for value, label in outcome_status_options['food'] %}<option value="{{ value }}" {% if value == outcome %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label><button type="submit" class="settings-save">Сохранить статус</button></form>
+                {% endif %}
+                <form method="post" action="{{ url_for('delete_food', food_id=item.id) }}" class="service-delete"><button type="submit" class="danger-button">Удалить товар</button></form>
+                {% elif is_final_outcome %}
+                <h2>Объявление завершено</h2>
+                {% if owner %}<div class="owner-identity"><span>Продавец: <a href="{{ url_for('public_profile', user_id=owner.id) }}">{{ owner.name }}</a></span></div>{% endif %}
+                <p class="owner-hint">Продавец отметил результат сделки. Новые способы связи по этой карточке закрыты.</p>
+                {% else %}
                 <h2>Связаться с продавцом</h2>
+                {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
+                {% if owner %}<div class="owner-identity"><span>Автор: <a href="{{ url_for('public_profile', user_id=owner.id) }}">{{ owner.name }}</a></span><a class="owner-rating owner-rating-inline" href="{{ url_for('public_profile', user_id=owner.id) }}#reviews" aria-label="Перейти к отзывам о продавце">{% if owner_rating and owner_rating.count %}<span class="owner-rating-star" aria-hidden="true">★</span><strong>{{ '%.1f'|format(owner_rating.average) }}</strong><span>{{ owner_rating.count }} отзыв{% if owner_rating.count % 10 in [2, 3, 4] and owner_rating.count % 100 not in [12, 13, 14] %}а{% elif owner_rating.count % 10 != 1 or owner_rating.count % 100 in [11, 12, 13, 14] %}ов{% endif %}</span>{% else %}<span aria-hidden="true">☆</span><span>Нет отзывов</span>{% endif %}</a></div>{% endif %}
                 {% if account_user %}
-                <p class="owner-hint">Автор: {{ owner.name if owner else 'Пользователь' }} · Нажмите «Позвонить», чтобы раскрыть номер.</p>
-                <div class="owner-phone reveal-phone" data-phone="{{ owner.phone if owner else '' }}">+7 ••• ••• •• ••</div>
+                <p class="owner-hint">{% if outcome == 'reserved' %}Продавец временно оставил способы связи доступными.{% else %}Нажмите «Позвонить», чтобы раскрыть номер.{% endif %}</p>
+                {% if 'phone' in methods and item.contacts %}<div class="owner-phone reveal-phone" data-phone="{{ item.contacts }}">••• ••• •• ••</div>{% endif %}
                 <div class="owner-actions">
-                    <button type="button" class="contact-link detail-call reveal-call">Позвонить продавцу</button>
-                    {% if owner and owner.telegram %}
-                    <a class="contact-link detail-call telegram-call" href="https://t.me/{{ owner.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>
-                    {% endif %}
-                    {% if not my_item %}
-                    <a class="contact-link detail-call" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>
-                    {% endif %}
+                    {% if 'phone' in methods and item.contacts %}<button type="button" class="contact-link detail-call reveal-call" data-listing-metric="phone_click" data-listing-type="food" data-listing-id="{{ item.id }}">Позвонить продавцу</button>{% endif %}
+                    {% if 'telegram' in methods and item.telegram %}<a class="contact-link detail-call telegram-call" href="https://t.me/{{ item.telegram }}" target="_blank" rel="noopener" data-listing-metric="telegram_click" data-listing-type="food" data-listing-id="{{ item.id }}">Написать в Telegram</a>{% endif %}
+                    {% if 'chat' in methods and owner %}<a class="contact-link detail-call" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}" data-listing-metric="chat_click" data-listing-type="food" data-listing-id="{{ item.id }}">Написать сообщение</a>{% endif %}
                 </div>
                 {% else %}
                 <p class="owner-hint">Контакты продавца доступны только зарегистрированным пользователям.</p>
-                <div class="owner-actions">
-                    <a class="contact-link detail-call" href="{{ url_for('login') }}">Войти, чтобы увидеть контакты</a>
-                    <a class="contact-link detail-call register-call" href="{{ url_for('register') }}">Зарегистрироваться</a>
-                </div>
+                <div class="owner-actions">{% if 'telegram' in methods and item.telegram %}<a class="contact-link detail-call telegram-call" href="https://t.me/{{ item.telegram }}" target="_blank" rel="noopener" data-listing-metric="telegram_click" data-listing-type="food" data-listing-id="{{ item.id }}">Написать в Telegram</a>{% endif %}<a class="contact-link detail-call" href="{{ url_for('login') }}">Войти, чтобы увидеть контакты</a><a class="contact-link detail-call register-call" href="{{ url_for('register') }}">Зарегистрироваться</a></div>
+                {% endif %}
                 {% endif %}
             </div>
-            {% if account_user and my_item %}
-            <form method="post" action="{{ url_for('delete_food', food_id=item.id) }}" class="service-delete">
-                <button type="submit" class="danger-button">Удалить товар</button>
-            </form>
-            {% endif %}
+            {% if owner %}{% set reviews_detail_mode = true %}{% set listing_type = 'food' %}{% set listing_id = item.id %}{% include '_owner_reviews.html' %}{% endif %}
+            {% if account_user and not my_item %}<details class="report-box"><summary>Пожаловаться на объявление</summary><form method="post" action="{{ url_for('report_listing', listing_type='food', listing_id=item.id) }}"><label>Причина<select name="reason" required><option value="" disabled selected>Выберите причину</option>{% for reason in report_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label><label>Комментарий <span>(необязательно)</span><textarea name="comment" maxlength="500" rows="2"></textarea></label><button type="submit" class="text-danger">Отправить жалобу</button></form></details>{% endif %}
         </div>
     </article>
 </main>
+{% include "_footer.html" %}
 <script>
-document.querySelectorAll('.reveal-call').forEach(function(button) {
-    button.addEventListener('click', function() {
-        var phone = document.querySelector('.reveal-phone');
-        if (!phone || !phone.dataset.phone) return;
-        var number = phone.dataset.phone;
-        phone.textContent = number;
-        phone.classList.add('revealed');
-        var link = document.createElement('a');
-        link.className = 'contact-link detail-call revealed-call';
-        link.href = 'tel:' + number.replace(/[^+\d]/g, '');
-        link.textContent = 'Позвонить';
-        button.replaceWith(link);
-    });
-});
+document.querySelectorAll('.reveal-call').forEach(function(button) { button.addEventListener('click', function() { var phone = document.querySelector('.reveal-phone'); if (!phone || !phone.dataset.phone) return; var number = phone.dataset.phone; phone.textContent = number; phone.classList.add('revealed'); var link = document.createElement('a'); link.className = 'contact-link detail-call revealed-call'; link.href = 'tel:' + number.replace(/[^+\d]/g, ''); link.textContent = 'Позвонить'; link.dataset.listingMetric = 'phone_click'; link.dataset.listingType = 'food'; link.dataset.listingId = '{{ item.id }}'; button.replaceWith(link); }); });
 </script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

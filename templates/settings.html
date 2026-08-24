@@ -23,7 +23,9 @@
     <nav class="account-tabs" aria-label="Разделы кабинета">
         <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
         <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}">Избранное</a>
         <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
+        {% if account_user.is_admin %}<a href="{{ url_for('admin_users') }}">Пользователи</a>{% endif %}
     </nav>
     <section class="account-hero">
         <p class="eyebrow">Личный кабинет</p>
@@ -37,16 +39,19 @@
         <div class="settings-card">
             <form method="post" action="{{ url_for('settings_profile') }}" enctype="multipart/form-data" class="settings-form">
                 <div class="avatar-block">
-                    <div class="avatar-preview">
+                    <div class="avatar-preview" id="avatar-preview">
                         {% if account_user.avatar %}
                         <img src="{{ url_for('static', filename='uploads/' ~ account_user.avatar) }}" alt="Аватар">
                         {% else %}
                         <span class="avatar-placeholder">{{ account_user.name[:1]|upper }}</span>
                         {% endif %}
                     </div>
-                    <label class="file-label">Загрузить фото
-                        <input type="file" name="avatar" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
-                    </label>
+                    <div class="avatar-upload-copy">
+                        <label class="file-label">Загрузить фото
+                            <input id="avatar-input" type="file" name="avatar" accept="image/png,image/jpeg,image/webp" hidden>
+                        </label>
+                        <span class="avatar-upload-hint" id="avatar-upload-hint">После выбора настройте область — аватар сохранится автоматически.</span>
+                    </div>
                 </div>
                 <label>Имя<input name="name" value="{{ account_user.name }}" required minlength="2"></label>
                 <label>Город
@@ -63,50 +68,73 @@
                     </select>
                 </label>
                 <label>Дата рождения<input name="birth_date" type="date" value="{{ account_user.birth_date or '' }}"></label>
-                <label>Telegram<input name="telegram" value="{{ account_user.telegram or '' }}" placeholder="@username"></label>
+                <label>Telegram для связи<input name="telegram" value="{{ account_user.telegram or '' }}" placeholder="@username или https://t.me/username"></label>
                 <label class="full-row">О себе<textarea name="about" rows="3" placeholder="Расскажите немного о себе">{{ account_user.about or '' }}</textarea></label>
                 <button type="submit" class="settings-save">Сохранить профиль</button>
             </form>
         </div>
     </section>
 
+    <dialog class="avatar-crop-dialog" id="avatar-crop-dialog" aria-labelledby="avatar-crop-title">
+        <div class="avatar-crop-shell">
+            <div class="avatar-crop-heading">
+                <div>
+                    <p class="eyebrow">Фото профиля</p>
+                    <h2 id="avatar-crop-title">Выберите область аватара</h2>
+                </div>
+                <button class="avatar-crop-close" id="avatar-crop-close" type="button" aria-label="Закрыть">×</button>
+            </div>
+            <p class="avatar-crop-help">Перетаскивайте фото внутри круга и настройте масштаб.</p>
+            <div class="avatar-crop-stage" id="avatar-crop-stage">
+                <canvas id="avatar-crop-canvas" width="640" height="640" tabindex="0" aria-label="Область кадрирования фотографии"></canvas>
+                <span class="avatar-crop-ring" aria-hidden="true"></span>
+            </div>
+            <label class="avatar-zoom-control" for="avatar-crop-zoom">
+                <span>Масштаб</span>
+                <span class="avatar-zoom-icons" aria-hidden="true">−&nbsp;&nbsp;&nbsp;+</span>
+                <input id="avatar-crop-zoom" type="range" min="1" max="3" step="0.01" value="1">
+            </label>
+            <p class="avatar-crop-status" id="avatar-crop-status" role="status" aria-live="polite"></p>
+            <div class="avatar-crop-actions">
+                <button class="avatar-crop-cancel" id="avatar-crop-cancel" type="button">Отмена</button>
+                <button class="avatar-crop-apply" id="avatar-crop-apply" type="button">Сохранить аватар</button>
+            </div>
+        </div>
+    </dialog>
+
     <section class="account-section settings-section">
         <h2>Контакты</h2>
         <div class="settings-card settings-contacts">
             <form method="post" action="{{ url_for('settings_email') }}" class="settings-inline-form">
-                <label>Email<input name="email" type="email" value="{{ account_user.email }}" required></label>
-                <button type="submit" class="settings-save">Обновить</button>
+                <label>Новый email<input name="email" type="email" value="{{ account_user.email }}" required autocomplete="email"></label>
+                <label>Текущий пароль<input name="current_password" type="password" required autocomplete="current-password"></label>
+                <button type="submit" class="settings-save">Отправить код</button>
             </form>
             <form method="post" action="{{ url_for('settings_phone') }}" class="settings-inline-form">
-                <label>Телефон РФ<input name="phone" type="tel" value="{{ account_user.phone or '' }}" placeholder="+7 999 123-45-67" required></label>
+                <label>Страна и код<select name="phone_country" required>{% for country, code in country_codes %}<option value="{{ code }}" {% if account_user.phone and account_user.phone.startswith(code) %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна — свой код ниже</option></select></label>
+                <label>Код другой страны<input name="phone_country_custom" type="tel" placeholder="Например, +351"></label>
+                <label>Номер телефона<input name="phone" type="tel" value="{{ account_user.phone or '' }}" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>
                 <button type="submit" class="settings-save">Обновить</button>
             </form>
         </div>
-        <p class="muted settings-hint">Телефон используется для контактов в объявлениях, email — для входа в аккаунт.</p>
-    </section>
-
-    <section class="account-section settings-section">
-        <h2>Аккаунт</h2>
-        <div class="settings-card account-summary">
-            <p><strong>ID:</strong> #{{ account_user.id }}</p>
-            <p><strong>Баланс:</strong> {{ '{:,.0f}'.format(account_user.balance or 0).replace(',', ' ') }} ₽</p>
-            <form method="post" action="{{ url_for('topup') }}" class="topup-form">
-                <input type="number" name="amount" min="100" max="100000" step="100" placeholder="Сумма" required>
-                <button type="submit">Пополнить баланс</button>
-            </form>
-        </div>
+        <p class="muted settings-hint">Для смены email нужен текущий пароль, затем код с нового адреса. Телефон используется для контактов в объявлениях.</p>
+        {% if pending_email_change %}<p class="muted settings-hint">Ожидается подтверждение адреса {{ pending_email_change.new_email }}. <a href="{{ url_for('verify_email_change') }}">Ввести код</a></p>{% endif %}
     </section>
 
     <section class="account-section settings-section">
         <h2>Опасная зона</h2>
         <div class="settings-card danger-zone">
-            <p>Удаление аккаунта безвозвратно удалит профиль и все ваши объявления с фотографиями.</p>
-            <form method="post" action="{{ url_for('settings_delete') }}" onsubmit="return confirm('Вы уверены? Это действие нельзя отменить.');">
+            <p>Удаление аккаунта безвозвратно удалит профиль, объявления и фотографии, переписки, избранное, жалобы, сохранённые поиски и данные для входа.</p>
+            <p class="muted">Для защиты аккаунта подтвердите действие текущим паролем. Восстановить удалённые данные нельзя.</p>
+            <form method="post" action="{{ url_for('settings_delete') }}" class="settings-inline-form" onsubmit="return confirm('Вы уверены? Это действие нельзя отменить.');">
+                <label>Текущий пароль<input name="current_password" type="password" autocomplete="current-password" required></label>
                 <button type="submit" class="danger-button">Удалить аккаунт</button>
             </form>
         </div>
     </section>
 </main>
-<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+<script src="{{ url_for('static', filename='avatar-crop.js', v='2') }}"></script>
 </body>
 </html>

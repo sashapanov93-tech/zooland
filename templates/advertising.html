@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Реклама на сайте — ZooLand</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="advertising-body">
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← На главную</a></div></header>
+<main class="advertising-page">
+    <section class="advertising-hero"><div><p class="eyebrow">Реклама в ZooLand</p><h1>Покажите предложение людям, которые заботятся о питомцах</h1><p>Подберём место размещения под вашу задачу. Обычная публикация объявлений остаётся бесплатной — оплачивается только дополнительное продвижение.</p><a class="publish-button" href="#advertising-request">Оставить заявку</a></div><div class="advertising-hero-mark" aria-hidden="true">Z</div></section>
+    <section class="advertising-formats" aria-label="Рекламные форматы">{% for value, item in formats.items() %}<article class="advertising-format-card"><span class="advertising-format-icon">{{ item.icon }}</span><h2>{{ item.title }}</h2><p>{{ item.summary }}</p><ul>{% for feature in item.features %}<li>{{ feature }}</li>{% endfor %}</ul><button type="button" class="format-select" data-ad-format="{{ value }}">Выбрать формат</button></article>{% endfor %}</section>
+    <section class="advertising-principles"><div><strong>Только уместная реклама</strong><span>Проверяем тематику и материалы перед публикацией.</span></div><div><strong>Понятная маркировка</strong><span>Рекламные блоки не маскируются под обычные объявления.</span></div><div><strong>Честная статистика</strong><span>Показываем агрегированные просмотры и переходы без слежения за посетителями.</span></div></section>
+    <section class="advertising-request-card" id="advertising-request"><div class="advertising-request-copy"><p class="eyebrow">Заявка на размещение</p><h2>Расскажите о вашей задаче</h2><p>Стоимость зависит от формата, срока и выбранных разделов. После проверки предложения мы свяжемся с вами и подготовим расчёт.</p></div>
+        {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }} advertising-flash">{{ message }}</div>{% endfor %}{% endwith %}
+        <form method="post" class="advertising-form">
+            <label>Формат<select name="format" id="advertising-format" required><option value="">Выберите формат</option>{% for value,item in formats.items() %}<option value="{{ value }}" {% if request.form.get('format') == value %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label>
+            <label>Контактное лицо<input name="contact_name" maxlength="80" value="{{ request.form.get('contact_name', user.name if user else '') }}" autocomplete="name" required></label>
+            <label>Компания или бренд<input name="company" maxlength="120" value="{{ request.form.get('company', '') }}" required></label>
+            <label>ИНН<input name="inn" inputmode="numeric" pattern="[0-9]{10}|[0-9]{12}" maxlength="12" value="{{ request.form.get('inn', '') }}" placeholder="10 или 12 цифр" required></label>
+            <label>Email<input name="email" type="email" value="{{ request.form.get('email', user.email if user else '') }}" autocomplete="email" required></label>
+            <label>Телефон <span>(необязательно)</span><input name="phone" maxlength="30" value="{{ request.form.get('phone', user.phone if user and user.phone else '') }}" autocomplete="tel"></label>
+            <label>Telegram <span>(необязательно)</span><input name="telegram" maxlength="40" value="{{ request.form.get('telegram', user.telegram if user and user.telegram else '') }}" placeholder="@username"></label>
+            <label>Ссылка на объявление или сайт<input name="target_url" type="text" maxlength="500" value="{{ request.form.get('target_url', '') }}" placeholder="https://..." required></label>
+            <label>Раздел показа<select name="category" required>{% for value,label in categories.items() %}<option value="{{ value }}" {% if request.form.get('category', 'all') == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+            <label>Города <span>(необязательно)</span><input name="cities" maxlength="300" value="{{ request.form.get('cities', '') }}" placeholder="Например: Москва, Казань"></label>
+            <label>Желаемые даты <span>(необязательно)</span><input name="preferred_dates" maxlength="160" value="{{ request.form.get('preferred_dates', '') }}" placeholder="Например: 1–15 сентября"></label>
+            <label>Предполагаемый бюджет<select name="budget" required><option value="">Выберите бюджет</option>{% for value in ['До 10 000 ₽','10 000–30 000 ₽','30 000–70 000 ₽','Более 70 000 ₽','Нужно рассчитать'] %}<option value="{{ value }}" {% if request.form.get('budget') == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+            <label class="full-row">Комментарий <span>(необязательно)</span><textarea name="comment" maxlength="2000" rows="5" placeholder="Что рекламируем и какого результата ожидаете">{{ request.form.get('comment', '') }}</textarea></label>
+            <label class="consent-row full-row"><input type="checkbox" name="personal_data_consent" value="yes" required><span>Я соглашаюсь на обработку указанных данных для рассмотрения рекламной заявки и обратной связи.</span></label>
+            <button class="full-row" type="submit">Отправить заявку</button>
+        </form>
+    </section>
+</main>{% include "_footer.html" %}<script src="{{ url_for('static', filename='script.js') }}"></script></body></html>

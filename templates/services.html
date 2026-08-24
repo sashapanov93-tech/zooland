@@ -17,6 +17,7 @@
             <a href="{{ url_for('index') }}">Объявления</a>
             <a href="{{ url_for('services_list') }}">Услуги</a>
             <a href="{{ url_for('food_list') }}">Зоопитание</a>
+            <a href="{{ url_for('accessories_list') }}">Аксессуары</a>
         </nav>
         {% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a><a class="account-link" href="{{ url_for('messages_list') }}">Сообщения</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}
         <a class="publish-button" href="#service-publish" data-open-publish>+ Разместить услугу</a>
@@ -27,7 +28,7 @@
         <div class="hero-content">
             <p class="eyebrow">Услуги для питомцев</p>
             <h1>Груминг, передержка,<br>зоогостиница и не только</h1>
-            <p class="hero-copy">Профессиональные услуги для ваших животных. Размещение — 250 ₽/мес, первый месяц всего 100 ₽.</p>
+            <p class="hero-copy">Профессиональные услуги для ваших животных. Размещение и продление бесплатны.</p>
         </div>
     </section>
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
@@ -47,7 +48,7 @@
     <section id="service-publish" class="add-form-section publish-modal" aria-hidden="true" role="dialog" aria-modal="true">
         <div class="modal-card">
         <button class="modal-close" type="button" aria-label="Закрыть окно">×</button>
-        <div class="section-heading"><div><p class="eyebrow">Платно</p><h2>Разместить услугу</h2></div><p>Публикация на 30 дней: первый месяц — 100 ₽, далее — 250 ₽. Требуется вход в аккаунт.</p></div>
+        <div class="section-heading"><div><p class="eyebrow">Бесплатно</p><h2>Разместить услугу</h2></div><p>Публикация на 30 дней бесплатна. Требуется вход в аккаунт.</p></div>
         {% if account_user %}
         <form class="add-form service-form" action="{{ url_for('add_service') }}" method="post" enctype="multipart/form-data">
             <select name="type" required>
@@ -64,9 +65,9 @@
                 </div>
             </div>
             <textarea name="description" placeholder="Описание услуги: опыт, условия, зона работы"></textarea>
-            <label class="file-input">Фото <input type="file" name="photo" accept="image/*"></label>
-            <button type="submit">Опубликовать за {% if account_user and account_user.balance < 100 %}{{ 100 }}{% elif my_services_count and my_services_count > 0 %}250{% else %}100{% endif %} ₽</button>
-            <p class="form-note">Стоимость спишется с баланса. Оплата публикации — первый месяц 100 ₽, повторно 250 ₽ на 30 дней.</p>
+            <label class="file-input">Фото — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
+            <button type="submit">Опубликовать бесплатно</button>
+            <p class="form-note">Публикация бесплатна на 30 дней; продление также бесплатно.</p>
         </form>
         {% else %}
         <p>Для размещения услуги <a href="{{ url_for('login') }}">войдите в аккаунт</a> или <a href="{{ url_for('register') }}">зарегистрируйтесь</a>.</p>
@@ -76,24 +77,30 @@
 
     <section class="cards-section">
         <div class="catalog-header"><div><p class="eyebrow">Каталог услуг</p><h2>Услуги рядом</h2><span class="result-count">Найдено: {{ services|length }}</span></div></div>
+        {% with advertisements=category_ads %}{% include "_advertising_banner.html" %}{% endwith %}
         <div class="cards">
             {% for service in services %}
-            <article class="card">
-                <a class="card-link" href="{{ url_for('service_detail', service_id=service.id) }}">
+            <article class="card{% if service.advertising_id %} card-promoted{% endif %}"{% if service.advertising_id %} data-advertisement-id="{{ service.advertising_id }}"{% endif %}>
+                {% if service.advertising_id %}<span class="promoted-label">Реклама · Продвигается</span>{% endif %}
+                {% set methods = (service.contact_methods or 'phone,chat,telegram').split(',') %}
+                <a class="card-link" href="{{ url_for('advertising_click', request_id=service.advertising_id) if service.advertising_id else url_for('service_detail', service_id=service.id) }}"{% if service.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if service.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + service.photo) }}" alt="{{ service.title }}">
+                <img src="{{ url_for('static', filename='uploads/' + service.photo.split(',')[0]) }}" alt="{{ service.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">✂️</div>
                 {% endif %}
                 <div class="card-body">
-                    <div class="card-topline"><span>{{ service.type }}</span></div>
+                    <div class="card-topline"><span>{{ service.type }}</span></div>{% if service.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
                     <h3>{{ service.title }}</h3>
                     {% if service.price %}<p class="price">{{ '{:,.0f}'.format(service.price).replace(',', ' ') }} ₽</p>{% endif %}
                     <p class="meta">{{ service.city or 'Город не указан' }} <span>•</span> {{ service.pet_types }}</p>
+                    <p class="publication-date">Опубликовано {{ service.created_at|publication_date }}</p>
                     <p class="description">{{ service.description or 'Подробнее на странице услуги.' }}</p>
                     <span class="card-more">Подробнее →</span>
                 </div>
                 </a>
-                {% if account_user and service.user_id != account_user.id %}<a class="contact-link card-contact" href="{{ url_for('message_thread', listing_type='service', listing_id=service.id) }}">Написать сообщение</a>{% endif %}
+                {% if account_user and service.user_id != account_user.id and 'chat' in methods %}<a class="contact-link card-contact" data-listing-metric="chat_click" data-listing-type="service" data-listing-id="{{ service.id }}" href="{{ url_for('message_thread', listing_type='service', listing_id=service.id) }}">Написать сообщение</a>{% endif %}
+                {% if 'telegram' in methods and service.owner_telegram %}<a class="contact-link card-contact telegram-card" data-listing-metric="telegram_click" data-listing-type="service" data-listing-id="{{ service.id }}" href="https://t.me/{{ service.owner_telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>{% endif %}
+                {% if account_user and service.user_id != account_user.id %}<form method="post" action="{{ url_for('toggle_favorite', listing_type='service', listing_id=service.id) }}" class="fav-form"><button type="submit" class="fav-btn {% if is_favorite('service', service.id) %}active{% endif %}" title="{% if is_favorite('service', service.id) %}Убрать из избранного{% else %}В избранное{% endif %}">♥</button></form>{% endif %}
             </article>
             {% else %}
             <div class="empty-state"><div>✂️</div><h3>Услуг пока нет</h3><p>Станьте первым, кто разместит услугу для питомцев.</p><a href="#service-publish" data-open-publish>Разместить услугу</a></div>
@@ -102,6 +109,7 @@
     </section>
 </main>
 <datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist>
+{% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

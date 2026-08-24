@@ -12,15 +12,17 @@
   <main class="auth-page"><section class="auth-card">
     <p class="eyebrow">ZooLand</p>
     <h1>{% if mode == 'login' %}С возвращением{% else %}Создайте аккаунт{% endif %}</h1>
-    <p>{% if mode == 'login' %}Войдите, чтобы управлять своими объявлениями.{% else %}Укажите российский телефон и корректный email.{% endif %}</p>
+    <p>{% if mode == 'login' %}Войдите, чтобы управлять своими объявлениями.{% else %}Выберите страну, укажите номер и email. После регистрации на почту придёт одноразовый код-пароль для подтверждения email.{% endif %}</p>
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
     <form method="post" class="auth-form">
-      {% if mode == 'register' %}<label>Имя<input name="name" required autocomplete="name"></label><label>Телефон РФ<input name="phone" type="tel" placeholder="+7 999 123-45-67" autocomplete="tel" required></label>{% endif %}
+      {% if mode == 'register' %}<label>Имя<input name="name" required autocomplete="name"></label><label>Страна и код<select name="phone_country" required>{% for country, code in country_codes %}<option value="{{ code }}" {% if code == '+7' and country == 'Россия' %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна — свой код ниже</option></select></label><label>Код другой страны<input name="phone_country_custom" type="tel" placeholder="Например, +351"></label><label>Номер телефона<input name="phone" type="tel" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>{% endif %}
       <label>Email<input name="email" type="email" required autocomplete="email"></label>
-      <label>Пароль<input name="password" type="password" minlength="6" required autocomplete="{% if mode == 'login' %}current-password{% else %}new-password{% endif %}"></label>
-      <button type="submit">{% if mode == 'login' %}Войти{% else %}Зарегистрироваться{% endif %}</button>
+      <label>Пароль<input name="password" type="password" minlength="10" required autocomplete="{% if mode == 'login' %}current-password{% else %}new-password{% endif %}"></label>
+      <button type="submit">{% if mode == 'login' %}Войти{% else %}Зарегистрироваться и получить код{% endif %}</button>
     </form>
-    <p class="auth-switch">{% if mode == 'login' %}Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a>{% else %}Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a>{% endif %}</p>
+    <p class="auth-switch">{% if mode == 'login' %}Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a> · <a href="{{ url_for('forgot_password') }}">Забыли пароль?</a>{% else %}Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a>{% endif %}</p>
   </section></main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

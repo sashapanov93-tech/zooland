@@ -23,66 +23,170 @@
     <nav class="account-tabs" aria-label="Разделы кабинета">
         <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
         <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}">Избранное</a>
         <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
+        {% if account_user.is_admin %}<a href="{{ url_for('admin_moderation') }}">Модерация</a><a href="{{ url_for('admin_reports') }}">Жалобы</a><a href="{{ url_for('admin_users') }}">Пользователи</a><a href="{{ url_for('admin_job_applications') }}">Отклики</a><a href="{{ url_for('admin_advertising') }}">Реклама</a>{% endif %}
     </nav>
+
     <section class="account-hero">
         <p class="eyebrow">Личный кабинет</p>
         <h1>Здравствуйте, {{ account_user.name }}!</h1>
         <p>ID пользователя: #{{ account_user.id }} · Активные объявления живут 7 дней, затем попадают в архив.</p>
-        <div class="balance-row">
-            <div class="balance-card">
-                <span class="balance-label">Баланс</span>
-                <span class="balance-value">{{ '{:,.0f}'.format(account_user.balance or 0).replace(',', ' ') }} ₽</span>
-            </div>
-            <form method="post" action="{{ url_for('topup') }}" class="topup-form">
-                <input type="number" name="amount" min="100" max="100000" step="100" placeholder="Сумма" required>
-                <button type="submit">Пополнить баланс</button>
-            </form>
+        <div class="account-hero-actions">
+            <button type="button" id="push-notifications" class="back-link">Включить push-уведомления о сообщениях</button>
+            <a class="publish-button" href="{{ url_for('index', _anchor='publish') }}">+ Новое объявление</a>
         </div>
-        <a class="publish-button" href="{{ url_for('index', _anchor='publish') }}">+ Новое объявление</a>
     </section>
+
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
-    <section class="account-section">
-        <h2>Активные · {{ active|length }}</h2>
-        <div class="account-list">
-            {% for animal in active %}
-            <article class="account-item">
-                <div>
-                    <strong>{{ animal.type }} · {{ animal.breed }}{% if animal.deal_type == 'buy' %} · Куплю{% else %} · Продам{% endif %}</strong>
-                    <p>{{ animal.city }} · {{ animal.price }} ₽</p>
-                    <small>До {{ animal.expires_at[:10] }}</small>
-                </div>
-                <div class="item-actions">
-                    <a href="{{ url_for('animal_detail', animal_id=animal.id) }}">Открыть</a>
-                    <a href="{{ url_for('edit_animal', animal_id=animal.id) }}">Редактировать</a>
-                    <form action="{{ url_for('extend_animal', animal_id=animal.id) }}" method="post"><button class="extend">Продлить на 7 дней · 100 ₽</button></form>
-                    <form action="{{ url_for('archive_animal', animal_id=animal.id) }}" method="post"><button>В архив</button></form>
-                    <form action="{{ url_for('delete_animal', animal_id=animal.id) }}" method="post"><button class="danger">Удалить</button></form>
-                </div>
-            </article>
-            {% else %}<p class="muted">Нет активных объявлений.</p>{% endfor %}
-        </div>
+
+    <section class="account-metrics" aria-label="Статистика активных объявлений">
+        <article class="account-metric"><span class="account-metric-label">Активные</span><strong>{{ active|length }}</strong><small>в каталоге</small></article>
+        <article class="account-metric"><span class="account-metric-label">Просмотры</span><strong>{{ account_metrics.views_7 }}</strong><small>за 7 дней</small></article>
+        <article class="account-metric"><span class="account-metric-label">Избранное</span><strong>{{ account_metrics.favorites_now }}</strong><small>сейчас</small></article>
+        <article class="account-metric"><span class="account-metric-label">Действия</span><strong>{{ account_metrics.contacts_7 }}</strong><small>за 7 дней</small></article>
+        <article class="account-metric"><span class="account-metric-label">Сообщения</span><strong>{{ account_metrics.messages_7 }}</strong><small>за 7 дней</small></article>
     </section>
-    <section class="account-section">
-        <h2>Архив · {{ archived|length }}</h2>
-        <div class="account-list">
-            {% for animal in archived %}
-            <article class="account-item">
-                <div>
-                    <strong>{{ animal.type }} · {{ animal.breed }}{% if animal.deal_type == 'buy' %} · Куплю{% else %} · Продам{% endif %}</strong>
-                    <p>{{ animal.city }} · {{ animal.price }} ₽</p>
-                    <small>Срок публикации закончился</small>
-                </div>
-                <div class="item-actions">
-                    <form action="{{ url_for('reactivate', animal_id=animal.id) }}" method="post"><button class="reactivate">Опубликовать снова · 100 ₽</button></form>
-                    <a href="{{ url_for('edit_animal', animal_id=animal.id) }}">Редактировать</a>
-                    <form action="{{ url_for('delete_animal', animal_id=animal.id) }}" method="post"><button class="danger">Удалить</button></form>
-                </div>
-            </article>
-            {% else %}<p class="muted">В архиве пока ничего нет.</p>{% endfor %}
-        </div>
-    </section>
+
+    <div class="view-switch account-view-switch" data-view-target="account-listings"><button type="button" data-view="grid" aria-label="Показать плиткой">▦ Плитка</button><button type="button" data-view="list" aria-label="Показать списком">☷ Список</button></div>
+    <div id="account-listings">
+        <section class="account-section">
+            <h2>На модерации · {{ pending|length }}</h2>
+            <div class="account-list">
+                {% for item in pending %}
+                <article class="account-item listing-item listing-item-pending">
+                    <div class="listing-summary">
+                        <div class="listing-title-row"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><span class="listing-status-pill status-pending">На модерации</span></div>
+                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <small>Отправлено {{ item.created_at|publication_date }} · не видно другим пользователям до одобрения</small>
+                    </div>
+                    <div class="item-actions item-actions-compact">
+                        {% if item.listing_type == 'animal' %}<a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% elif item.listing_type == 'service' %}<a href="{{ url_for('edit_service', service_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_service', service_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% else %}<a href="{{ url_for('edit_food', food_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_food', food_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% endif %}
+                    </div>
+                </article>
+                {% else %}<p class="muted">На проверке ничего нет.</p>{% endfor %}
+            </div>
+        </section>
+
+        <section class="account-section">
+            <div class="account-section-heading"><div><h2>Активные объявления · {{ active|length }}</h2><p class="section-note">Просмотры, избранное и действия обновляются автоматически — без данных посетителей.</p></div></div>
+            <div class="account-list">
+                {% for item in active %}
+                {% set deal_status = item.deal_status or 'open' %}
+                <article class="account-item listing-item outcome-{{ deal_status }}">
+                    <div class="listing-summary">
+                        <div class="listing-title-row">
+                            <strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }} · {{ deal_type_labels.get(item.deal_type, 'Продам') }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong>
+                            <span class="listing-status-pill status-{{ deal_status }}">{{ outcome_status_labels.get(deal_status, 'Активно') }}</span>
+                        </div>
+                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <small>Опубликовано {{ item.created_at|publication_date }}{% if item.expires_at %} · до {{ item.expires_at|publication_date }}{% endif %}</small>
+
+                        {% if item.revision_status %}
+                        <div class="listing-revision-note revision-{{ item.revision_status }}">
+                            <strong>{% if item.revision_status == 'pending' %}Изменения на модерации{% else %}Изменения нужно исправить{% endif %}</strong>
+                            <span>{% if item.revision_status == 'pending' %}Посетители пока видят предыдущую опубликованную версию.{% else %}Опубликованная карточка остаётся доступной, пока вы не исправите новую версию.{% endif %}</span>
+                            {% if item.revision_reason %}<span class="listing-revision-reason"><b>Причина:</b> {{ item.revision_reason }}</span>{% endif %}
+                        </div>
+                        {% endif %}
+
+                        <dl class="listing-metric-row" aria-label="Статистика объявления">
+                            <div><dt>Просмотры</dt><dd>{{ item.metrics.views_7 }} <small>за 7 дней</small></dd></div>
+                            <div><dt>За месяц</dt><dd>{{ item.metrics.views_30 }} <small>просмотров</small></dd></div>
+                            <div><dt>Избранное</dt><dd>{{ item.metrics.favorites_now }}</dd></div>
+                            <div><dt>Действия</dt><dd>{{ item.metrics.contacts_7 + item.metrics.messages_7 }} <small>за 7 дней</small></dd></div>
+                        </dl>
+                    </div>
+                    <div class="item-actions listing-actions">
+                        {% if item.listing_type == 'animal' %}
+                        <a href="{{ url_for('animal_detail', animal_id=item.id) }}">Открыть</a><a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a>
+                        {% elif item.listing_type == 'service' %}
+                        <a href="{{ url_for('service_detail', service_id=item.id) }}">Открыть</a><a href="{{ url_for('edit_service', service_id=item.id) }}">Редактировать</a>
+                        {% else %}
+                        <a href="{{ url_for('food_detail', food_id=item.id) }}">Открыть</a><a href="{{ url_for('edit_food', food_id=item.id) }}">Редактировать</a>
+                        {% endif %}
+                        <details class="listing-management">
+                            <summary>Управление</summary>
+                            <div class="listing-management-panel">
+                                <form method="post" action="{{ url_for('set_listing_outcome', listing_type=item.listing_type, listing_id=item.id) }}" class="outcome-form">
+                                    <label>Статус объявления<select name="deal_status">{% for value, label in outcome_status_options[item.listing_type] %}<option value="{{ value }}" {% if value == deal_status %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                                    <button type="submit" class="settings-save">Сохранить статус</button>
+                                </form>
+                                <div class="listing-management-secondary">
+                                    {% if item.listing_type == 'animal' %}<form action="{{ url_for('extend_animal', animal_id=item.id) }}" method="post"><button class="extend">Продлить на 7 дней</button></form><form action="{{ url_for('archive_animal', animal_id=item.id) }}" method="post"><button>В архив</button></form><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                                    {% elif item.listing_type == 'service' %}<form action="{{ url_for('renew_service', service_id=item.id) }}" method="post"><button class="extend">Продлить</button></form><form action="{{ url_for('delete_service', service_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                                    {% else %}<form action="{{ url_for('delete_food', food_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% endif %}
+                                </div>
+                            </div>
+                        </details>
+                    </div>
+                </article>
+                {% else %}<p class="muted">Нет активных объявлений.</p>{% endfor %}
+            </div>
+        </section>
+
+        <section class="account-section revision-section">
+            <h2>Нужно исправить · {{ rejected|length }}</h2>
+            <p class="section-note">Эти объявления не видны в каталоге. Исправьте указанное замечание — после сохранения они автоматически отправятся на повторную модерацию.</p>
+            <div class="account-list">
+                {% for item in rejected %}
+                <article class="account-item revision-item">
+                    <div class="listing-summary">
+                        <strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong>
+                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <small>Отправлено {{ item.created_at|publication_date }}</small>
+                        <p class="revision-reason"><b>Причина:</b> {{ item.moderation_reason or 'Требуется проверить и уточнить информацию в объявлении.' }}</p>
+                    </div>
+                    <div class="item-actions item-actions-compact">
+                        {% if item.listing_type == 'animal' %}<a class="revision-link" href="{{ url_for('edit_animal', animal_id=item.id) }}">Исправить и отправить</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                        {% elif item.listing_type == 'service' %}<a class="revision-link" href="{{ url_for('edit_service', service_id=item.id) }}">Исправить и отправить</a><form action="{{ url_for('delete_service', service_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                        {% else %}<a class="revision-link" href="{{ url_for('edit_food', food_id=item.id) }}">Исправить и отправить</a><form action="{{ url_for('delete_food', food_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% endif %}
+                    </div>
+                </article>
+                {% else %}<p class="muted">Объявлений, требующих исправления, нет.</p>{% endfor %}
+            </div>
+        </section>
+
+        <section class="account-section completed-section">
+            <div class="account-section-heading"><div><h2>Завершённые сделки · {{ completed|length }}</h2><p class="section-note">Они скрыты из каталога, но переписка и отзывы по ним сохраняются.</p></div></div>
+            <div class="account-list">
+                {% for item in completed %}
+                {% set deal_status = item.deal_status or 'open' %}
+                <article class="account-item listing-item completed-item outcome-{{ deal_status }}">
+                    <div class="listing-summary">
+                        <div class="listing-title-row"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><span class="listing-status-pill status-{{ deal_status }}">{{ outcome_status_labels.get(deal_status, 'Сделка завершена') }}</span></div>
+                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <small>Завершено {{ (item.outcome_at or item.created_at)|publication_date }} · объявление скрыто из поиска</small>
+                    </div>
+                    <div class="item-actions item-actions-compact">
+                        {% if item.listing_type == 'animal' %}<a href="{{ url_for('animal_detail', animal_id=item.id) }}">Посмотреть</a>{% elif item.listing_type == 'service' %}<a href="{{ url_for('service_detail', service_id=item.id) }}">Посмотреть</a>{% else %}<a href="{{ url_for('food_detail', food_id=item.id) }}">Посмотреть</a>{% endif %}
+                        <form method="post" action="{{ url_for('set_listing_outcome', listing_type=item.listing_type, listing_id=item.id) }}"><input type="hidden" name="deal_status" value="open"><button class="reactivate">Опубликовать снова</button></form>
+                    </div>
+                </article>
+                {% else %}<p class="muted">Завершённых сделок пока нет.</p>{% endfor %}
+            </div>
+        </section>
+
+        <section class="account-section">
+            <h2>Архив · {{ archived|length }}</h2>
+            <div class="account-list">
+                {% for item in archived %}
+                <article class="account-item listing-item archived-item">
+                    <div class="listing-summary"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p><small>Опубликовано {{ item.created_at|publication_date }} · публикация завершена</small></div>
+                    <div class="item-actions item-actions-compact">
+                        {% if item.listing_type == 'animal' %}<form action="{{ url_for('reactivate', animal_id=item.id) }}" method="post"><button class="reactivate">Опубликовать снова</button></form><a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                        {% elif item.listing_type == 'service' %}<form action="{{ url_for('renew_service', service_id=item.id) }}" method="post"><button class="reactivate">Опубликовать снова</button></form><a href="{{ url_for('edit_service', service_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_service', service_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
+                        {% else %}<form action="{{ url_for('renew_food', food_id=item.id) }}" method="post"><button class="reactivate">Опубликовать снова</button></form><a href="{{ url_for('edit_food', food_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_food', food_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>{% endif %}
+                    </div>
+                </article>
+                {% else %}<p class="muted">В архиве пока ничего нет.</p>{% endfor %}
+            </div>
+        </section>
+
+        <section class="account-section saved-searches"><h2>Сохранённые поиски · {{ saved_searches|length }}</h2><div class="account-list">{% for saved in saved_searches %}<article class="account-item"><div><strong>{{ saved.name }}</strong><p>Уведомления будут приходить на email при появлении подходящих объявлений.</p></div><div class="item-actions"><form method="post" action="{{ url_for('delete_saved_search', search_id=saved.id) }}"><button class="danger">Удалить</button></form></div></article>{% else %}<p class="muted">Сохраните поиск на главной, чтобы получать новые объявления на email.</p>{% endfor %}</div></section>
+    </div>
 </main>
-<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

@@ -1,0 +1,94 @@
+{% macro review_count_label(value) -%}
+    {% set remainder = value % 100 %}
+    {% if remainder >= 11 and remainder <= 14 %}
+        {{ value }} отзывов
+    {% elif value % 10 == 1 %}
+        {{ value }} отзыв
+    {% elif value % 10 >= 2 and value % 10 <= 4 %}
+        {{ value }} отзыва
+    {% else %}
+        {{ value }} отзывов
+    {% endif %}
+{%- endmacro %}
+
+{% set review_count = owner_rating.count|int if owner_rating is defined and owner_rating else 0 %}
+{% set review_average = owner_rating.average if review_count else none %}
+<section class="owner-reviews" id="reviews" aria-labelledby="owner-reviews-title">
+    <div class="owner-reviews-heading">
+        <div>
+            <p class="eyebrow">Опыт покупателей</p>
+            <h2 id="owner-reviews-title">Отзывы о владельце</h2>
+        </div>
+        {% if review_count %}
+        <div class="owner-rating owner-rating-summary" aria-label="Рейтинг {{ '%.1f'|format(review_average) }} из 5 на основе {{ review_count_label(review_count)|trim }}">
+            <span class="owner-rating-star" aria-hidden="true">★</span>
+            <strong>{{ '%.1f'|format(review_average) }}</strong>
+            <span>{{ review_count_label(review_count)|trim }}</span>
+        </div>
+        {% else %}
+        <span class="owner-rating owner-rating-empty"><span aria-hidden="true">☆</span> Пока нет отзывов</span>
+        {% endif %}
+    </div>
+
+    <div class="owner-review-list">
+        {% for review in owner_reviews|default([], true) %}
+        <article class="owner-review">
+            <div class="owner-review-topline">
+                <div class="reviewer">
+                    {% if review.reviewer_avatar %}
+                    <img src="{{ url_for('static', filename='uploads/' + review.reviewer_avatar) }}" alt="">
+                    {% else %}
+                    <span class="reviewer-avatar" aria-hidden="true">{{ review.reviewer_name[:1]|upper }}</span>
+                    {% endif %}
+                    <strong>{{ review.reviewer_name }}</strong>
+                </div>
+                <div class="review-rating" aria-label="Оценка {{ review.rating }} из 5">
+                    <span aria-hidden="true">{% for star in range(1, 6) %}{% if star <= review.rating %}★{% else %}☆{% endif %}{% endfor %}</span>
+                    <time datetime="{{ review.created_at }}">{{ review.created_at|publication_date }}</time>
+                </div>
+            </div>
+            {% if review.comment %}<p>{{ review.comment }}</p>{% endif %}
+        </article>
+        {% else %}
+        <p class="owner-reviews-empty">Пока никто не оставил отзыв. После общения по объявлению покупатель сможет оценить владельца.</p>
+        {% endfor %}
+    </div>
+
+    {% if reviews_detail_mode|default(false) %}
+    <div class="review-form-wrap">
+        {% if review_eligibility|default(false) %}
+        <div class="review-form-intro">
+            <h3>{% if my_review|default(none) %}Изменить отзыв{% else %}Оставить отзыв{% endif %}</h3>
+            <p>Оцените опыт общения с владельцем по этому объявлению.</p>
+        </div>
+        <form class="review-form" method="post" action="{{ url_for('submit_owner_review', listing_type=listing_type, listing_id=listing_id) }}">
+            <label>
+                Оценка
+                <select name="rating" required aria-label="Ваша оценка">
+                    <option value="" {% if not my_review|default(none) %}selected{% endif %} disabled>Выберите оценку</option>
+                    {% for value, label in [(5, '5 — Отлично'), (4, '4 — Хорошо'), (3, '3 — Нормально'), (2, '2 — Плохо'), (1, '1 — Очень плохо')] %}
+                    <option value="{{ value }}" {% if my_review|default(none) and my_review.rating == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </label>
+            <label>
+                Отзыв <span>(необязательно)</span>
+                <textarea name="comment" maxlength="1000" rows="3" placeholder="Расскажите, как прошло общение">{{ my_review.comment if my_review|default(none) else '' }}</textarea>
+            </label>
+            <div class="review-form-actions">
+                <button type="submit" class="review-submit">{% if my_review|default(none) %}Сохранить изменения{% else %}Опубликовать отзыв{% endif %}</button>
+                {% if my_review|default(none) %}
+                <button type="submit" class="review-delete" formaction="{{ url_for('delete_owner_review', listing_type=listing_type, listing_id=listing_id) }}" formnovalidate>Удалить отзыв</button>
+                {% endif %}
+            </div>
+        </form>
+        {% elif account_user|default(none) and owner|default(none) and account_user.id == owner.id %}
+        <p class="review-eligibility-note">Здесь отображаются отзывы покупателей о вас. Оставить отзыв о собственном объявлении нельзя.</p>
+        {% elif account_user|default(none) %}
+        <p class="review-eligibility-note">Отзыв можно оставить после взаимной переписки с владельцем именно по этому объявлению.</p>
+        {% else %}
+        <p class="review-eligibility-note"><a href="{{ url_for('login') }}">Войдите</a>, чтобы после переписки с владельцем оставить отзыв.</p>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>

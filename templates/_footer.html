@@ -1,0 +1,22 @@
+<footer class="site-footer">
+    <div class="footer-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <p>Тёплые встречи начинаются здесь.</p>
+    </div>
+    <div class="footer-inner support-footer">
+        <div class="support-block">
+            <strong>Связь с поддержкой</strong>
+            <div class="support-links">
+                <a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a>
+                <a class="support-link" href="{{ url_for('support') }}">Написать в поддержку</a>
+            </div>
+        </div>
+    </div>
+    <nav class="footer-legal" aria-label="Информация о сайте">
+        <span>Политика конфиденциальности</span>
+        <span>Условия пользования сайтом</span>
+        <a href="{{ url_for('advertising') }}">Реклама на сайте</a>
+        <a href="{{ url_for('vacancies') }}">Вакансии</a>
+    </nav>
+    <div class="footer-copyright">© 2026 ZooLand</div>
+</footer>

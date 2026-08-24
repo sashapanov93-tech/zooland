@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Рекламные заявки — ZooLand</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header"><div class="header-inner">
+    <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+    <div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_job_applications') }}">Отклики</a><a class="back-link" href="{{ url_for('admin_users') }}">Пользователи</a></div>
+</div></header>
+<main class="account-page">
+    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Рекламные заявки · {{ advertising_requests|length }}</h1><p>Настройте креатив и сроки. Статус «Активна» публикует готовое размещение автоматически.</p></section>
+    {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <nav class="application-filters"><a class="{% if not selected_status %}active{% endif %}" href="{{ url_for('admin_advertising') }}">Все</a>{% for value,label in statuses.items() %}<a class="{% if selected_status == value %}active{% endif %}" href="{{ url_for('admin_advertising', status=value) }}">{{ label }}</a>{% endfor %}</nav>
+    <section class="application-admin-list">
+    {% for item in advertising_requests %}
+        <article class="application-admin-card advertising-admin-card">
+            <div>
+                <p class="eyebrow">Заявка № {{ item.id }} · {{ statuses[item.status] }}</p>
+                <h2>{{ item.company }} — {{ formats[item.format].title }}</h2>
+                <p class="advertising-placement-state{% if item.placement_state == 'Активна в ротации' %} is-live{% endif %}">{{ item.placement_state }}</p>
+                <div class="advertising-admin-metrics"><span><strong>{{ item.metrics.impressions }}</strong> показов</span><span><strong>{{ item.metrics.clicks }}</strong> переходов</span></div>
+                <p>{{ item.contact_name }} · <a href="mailto:{{ item.email }}">{{ item.email }}</a>{% if item.phone %} · <a href="tel:{{ item.phone }}">{{ item.phone }}</a>{% endif %}{% if item.telegram %} · <a href="https://t.me/{{ item.telegram }}" target="_blank" rel="noopener">@{{ item.telegram }}</a>{% endif %}</p>
+                <p><b>ИНН:</b> {{ item.inn }} · <b>Бюджет:</b> {{ item.budget }}</p>
+                <p><b>Раздел:</b> {{ categories[item.category] }}{% if item.cities %} · <b>Города:</b> {{ item.cities }}{% endif %}</p>
+                <p>{% if item.safe_target_url %}<a href="{{ item.safe_target_url }}" target="_blank" rel="noopener noreferrer">Открыть рекламируемую страницу ↗</a>{% else %}<span class="muted">Целевая ссылка требует исправления</span>{% endif %}</p>
+                <small>Получена {{ item.created_at[:16].replace('T', ' ') }}</small>
+                <details><summary>Исходная заявка</summary>{% if item.preferred_dates %}<h3>Желаемые даты</h3><p>{{ item.preferred_dates }}</p>{% endif %}<h3>Комментарий</h3><p class="preserve-lines">{{ item.comment or 'Не указан' }}</p></details>
+            </div>
+            <form method="post" action="{{ url_for('update_advertising_request', request_id=item.id) }}" class="application-admin-form advertising-publish-form">
+                <label>Формат<select name="format">{% for value,data in formats.items() %}<option value="{{ value }}" {% if item.format == value %}selected{% endif %}>{{ data.title }}</option>{% endfor %}</select></label>
+                <label>Раздел<select name="category">{% for value,label in categories.items() %}<option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label>Города <span>Через запятую; пусто — без ограничения</span><input name="cities" maxlength="300" value="{{ item.cities or '' }}"></label>
+                <label>Целевая ссылка<input name="target_url" maxlength="500" value="{{ item.target_url }}" required></label>
+                <label>Заголовок<input name="headline" maxlength="120" value="{{ item.headline or '' }}" placeholder="По умолчанию — название компании"></label>
+                <label>Текст объявления<textarea name="ad_text" maxlength="320" rows="3" placeholder="Коротко опишите предложение">{{ item.ad_text or '' }}</textarea></label>
+                <label>Текст кнопки<input name="button_label" maxlength="40" value="{{ item.button_label or 'Подробнее' }}" required></label>
+                <div class="advertising-date-fields"><label>Начало показа<input name="start_date" type="date" value="{{ item.start_date or '' }}"></label><label>Окончание показа<input name="end_date" type="date" value="{{ item.end_date or '' }}"></label></div>
+                <p class="form-note advertising-admin-hint">Для «Продвижения объявления» укажите внутреннюю ссылку вида <code>/animal/1</code>, <code>/service/1</code> или <code>/food/1</code>.</p>
+                <label>Статус<select name="status">{% for value,label in statuses.items() %}<option value="{{ value }}" {% if item.status == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                <label>Заметка администратора<textarea name="admin_note" maxlength="2000" rows="3">{{ item.admin_note }}</textarea></label>
+                <button type="submit">Сохранить и применить</button>
+            </form>
+        </article>
+    {% else %}
+        <div class="empty-state"><div>📣</div><h3>Заявок пока нет</h3><p>Новые рекламные заявки появятся здесь.</p></div>
+    {% endfor %}
+    </section>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

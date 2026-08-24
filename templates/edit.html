@@ -10,30 +10,42 @@
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
-<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← К объявлениям</a></div></header>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('account') }}">← В кабинет</a></div></header>
 <main class="edit-page">
-    <div class="edit-title"><p class="eyebrow">Объявление №{{ animal['id'] }}</p><h1>Редактировать объявление</h1><p>Обновите информацию о питомце и сохраните изменения.</p></div>
-    <form class="add-form edit-form" action="{{ url_for('update_animal', animal_id=animal['id']) }}" method="post" enctype="multipart/form-data">
-    <div class="deal-type">
-        <span class="pet-types-label">Тип сделки:</span>
-        <div class="pet-types-grid">
-            <label class="pet-check"><input type="radio" name="deal_type" value="sale" {% if animal['deal_type'] != 'buy' %}checked{% endif %}><span>Продажа</span></label>
-            <label class="pet-check"><input type="radio" name="deal_type" value="buy" {% if animal['deal_type'] == 'buy' %}checked{% endif %}><span>Покупка</span></label>
-        </div>
+    <div class="edit-title">
+        <p class="eyebrow">Объявление №{{ animal['id'] }}</p>
+        <h1>Редактировать объявление</h1>
+        {% if revision and revision.status == 'pending' %}
+        <p>Новая версия уже на модерации. Здесь можно уточнить её ещё раз, если это необходимо.</p>
+        <div class="edit-revision-state state-pending"><strong>Изменения на проверке</strong><span>Посетители пока видят предыдущую опубликованную версию объявления.</span></div>
+        {% elif revision and revision.status == 'rejected' %}
+        <p>Изменения вернулись с модерации. Исправьте замечание — прежняя опубликованная версия пока остаётся доступной.</p>
+        <div class="edit-revision-state state-rejected"><strong>Нужно исправить новую версию</strong>{% if revision.moderation_reason %}<span><b>Причина:</b> {{ revision.moderation_reason }}</span>{% else %}<span>Проверьте текст, фото и контакты перед повторной отправкой.</span>{% endif %}</div>
+        {% elif animal.status == 'rejected' %}
+        <p>Объявление не опубликовано. Исправьте замечание и отправьте его на повторную модерацию.</p>
+        <div class="edit-revision-state state-rejected"><strong>Объявление требует доработки</strong><span><b>Причина:</b> {{ animal.moderation_reason or 'Требуется уточнить информацию.' }}</span></div>
+        {% else %}
+        <p>После сохранения изменения пройдут повторную модерацию. Посетители продолжат видеть текущую опубликованную версию до решения модератора.</p>
+        {% endif %}
     </div>
-    <select name="type" required>
-        {% for type in animal_types %}<option value="{{ type }}" {% if animal['type'] == type %}selected{% endif %}>{{ type }}</option>{% endfor %}
-        </select>
+    <form class="add-form edit-form" action="{{ url_for('update_animal', animal_id=animal['id']) }}" method="post" enctype="multipart/form-data">
+        <div class="deal-type"><span class="pet-types-label">Тип сделки:</span><div class="pet-types-grid"><label class="pet-check"><input type="radio" name="deal_type" value="sale" {% if animal['deal_type'] == 'sale' %}checked{% endif %}><span>Продажа</span></label><label class="pet-check"><input type="radio" name="deal_type" value="buy" {% if animal['deal_type'] == 'buy' %}checked{% endif %}><span>Покупка</span></label><label class="pet-check"><input type="radio" name="deal_type" value="mating" {% if animal['deal_type'] == 'mating' %}checked{% endif %}><span>Вязка</span></label><label class="pet-check"><input type="radio" name="deal_type" value="friend" {% if animal['deal_type'] == 'friend' %}checked{% endif %}><span>Ищу друга/подругу</span></label></div></div>
+        <select name="type" required>{% for type in animal_types %}<option value="{{ type }}" {% if animal['type'] == type %}selected{% endif %}>{{ type }}</option>{% endfor %}</select>
         <input type="text" name="breed" value="{{ animal['breed'] }}" placeholder="Порода" required>
         <input type="number" name="age" value="{{ animal['age'] }}" placeholder="Возраст" required>
+        <select name="sex"><option value="">Пол не указан</option><option value="male" {% if animal.sex == 'male' %}selected{% endif %}>Самец</option><option value="female" {% if animal.sex == 'female' %}selected{% endif %}>Самка</option></select>
+        <input type="date" name="birth_date" value="{{ animal.birth_date or '' }}">
+        <fieldset class="animal-facts"><legend>Информация о питомце</legend><label><input type="checkbox" name="vaccinated" value="1" {% if animal.vaccinated %}checked{% endif %}> Есть прививки</label><label><input type="checkbox" name="vet_passport" value="1" {% if animal.vet_passport %}checked{% endif %}> Ветпаспорт</label><label><input type="checkbox" name="pedigree" value="1" {% if animal.pedigree %}checked{% endif %}> Родословная</label><label><input type="checkbox" name="sterilized" value="1" {% if animal.sterilized %}checked{% endif %}> Стерилизован/кастрирован</label><label><input type="checkbox" name="delivery" value="1" {% if animal.delivery %}checked{% endif %}> Возможна доставка</label></fieldset>
         <input type="number" name="price" value="{{ animal['price'] }}" placeholder="Цена" required>
         <input type="text" name="city" value="{{ animal['city'] }}" list="cities" placeholder="Город" required>
         <textarea name="description" placeholder="Описание">{{ animal['description'] or '' }}</textarea>
-        <input type="text" name="contacts" value="{{ animal['contacts'] }}" placeholder="Контакты" required>
-        <label class="file-input">Заменить фото <input type="file" name="photo" accept="image/*"></label>
-        <button type="submit">Сохранить изменения</button>
+        <fieldset class="contact-choice"><legend>Как с вами связаться</legend>{% set methods = (animal.contact_methods or 'phone,chat,telegram').split(',') %}<label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" {% if 'phone' in methods %}checked{% endif %}><span>По телефону</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" {% if 'chat' in methods %}checked{% endif %}><span>В сообщениях ZooLand</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram" {% if 'telegram' in methods %}checked{% endif %}><span>В Telegram</span></label><label class="pet-check"><input type="radio" name="phone_source" value="current" checked><span>Текущий номер</span></label><label class="pet-check"><input type="radio" name="phone_source" value="other"><span>Другой номер</span></label><select name="phone_country">{% for country, code in country_codes %}<option value="{{ code }}" {% if code == '+7' and country == 'Россия' %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна</option></select><input type="tel" name="phone_country_custom" placeholder="Код другой страны, +351"><input type="tel" name="contacts" value="{{ animal['contacts'] }}" placeholder="Другой номер"></fieldset>
+        <label class="file-input">Заменить фото — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
+        <button type="submit">{% if revision and revision.status == 'pending' %}Обновить версию на модерации{% elif revision and revision.status == 'rejected' or animal.status == 'rejected' %}Исправить и отправить на модерацию{% else %}Сохранить и отправить на модерацию{% endif %}</button>
     </form>
     <datalist id="cities">{% for city in russian_cities|default([]) %}<option value="{{ city }}">{% endfor %}</datalist>
 </main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

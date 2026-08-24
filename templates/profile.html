@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ profile.name }} — ZooLand</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <a class="back-link" href="{{ url_for('index') }}">← К объявлениям</a>
+    </div>
+</header>
+<main class="account-page">
+    <section class="profile-hero">
+        {% if profile.avatar %}<img src="{{ url_for('static', filename='uploads/' + profile.avatar) }}" alt="">{% else %}<span>{{ profile.name[:1]|upper }}</span>{% endif %}
+        <div>
+            <p class="eyebrow">Профиль продавца</p>
+            <h1>{{ profile.name }}</h1>
+            <a class="owner-rating owner-rating-profile" href="#reviews" aria-label="Отзывы о {{ profile.name }}">
+                {% if owner_rating and owner_rating.count %}<span class="owner-rating-star" aria-hidden="true">★</span><strong>{{ '%.1f'|format(owner_rating.average) }}</strong><span>{{ owner_rating.count }} отзыв{% if owner_rating.count % 10 in [2, 3, 4] and owner_rating.count % 100 not in [12, 13, 14] %}а{% elif owner_rating.count % 10 != 1 or owner_rating.count % 100 in [11, 12, 13, 14] %}ов{% endif %}</span>{% else %}<span aria-hidden="true">☆</span><span>Нет отзывов</span>{% endif %}
+            </a>
+            <p>{{ profile.city or 'Город не указан' }} · На ZooLand с {{ profile.created_at[:10] }}</p>
+            {% if profile.about %}<p>{{ profile.about }}</p>{% endif %}
+            {% if profile.telegram %}<a class="contact-link" href="https://t.me/{{ profile.telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>{% endif %}
+        </div>
+    </section>
+    {% set reviews_detail_mode = false %}
+    {% include '_owner_reviews.html' %}
+    <section class="cards-section">
+        <h2>Активные объявления · {{ listings|length }}</h2>
+        <div class="cards">
+            {% for item in listings %}
+            <article class="card">
+                <a class="card-link" href="{% if item.kind == 'animal' %}{{ url_for('animal_detail', animal_id=item.id) }}{% elif item.kind == 'service' %}{{ url_for('service_detail', service_id=item.id) }}{% else %}{{ url_for('food_detail', food_id=item.id) }}{% endif %}">
+                    {% if item.photo %}<img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="">{% else %}<div class="card-placeholder">🐾</div>{% endif %}
+                    <div class="card-body">
+                        {% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
+                        <h3>{{ item.listing_title }}</h3>
+                        <p class="meta">{{ item.city or 'Город не указан' }}</p>
+                        <p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p>
+                    </div>
+                </a>
+            </article>
+            {% else %}
+            <p class="muted">У пользователя пока нет активных объявлений.</p>
+            {% endfor %}
+        </div>
+    </section>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

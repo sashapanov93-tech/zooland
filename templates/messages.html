@@ -23,16 +23,19 @@
     <nav class="account-tabs" aria-label="Разделы кабинета">
         <a href="{{ url_for('account') }}" class="{% if tab == 'listings' %}active{% endif %}">Мои объявления</a>
         <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}">Сообщения</a>
+        <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}">Избранное</a>
         <a href="{{ url_for('settings') }}" class="{% if tab == 'settings' %}active{% endif %}">Настройки</a>
     </nav>
     <section class="account-hero">
         <p class="eyebrow">Личный кабинет</p>
         <h1>Сообщения</h1>
         <p>Переписка с продавцами и покупателями по вашим объявлениям.</p>
+        <button type="button" id="push-notifications" class="back-link">Включить push-уведомления</button>
         <nav class="message-folders" aria-label="Папки сообщений">
             <a href="{{ url_for('messages_list', folder='inbox') }}" class="{% if folder == 'inbox' %}active{% endif %}">Входящие · {{ counts.inbox }}</a>
             <a href="{{ url_for('messages_list', folder='archive') }}" class="{% if folder == 'archive' %}active{% endif %}">Архив · {{ counts.archive }}</a>
             <a href="{{ url_for('messages_list', folder='spam') }}" class="{% if folder == 'spam' %}active{% endif %}">Спам · {{ counts.spam }}</a>
+            <a href="{{ url_for('messages_list', folder='deleted') }}" class="{% if folder == 'deleted' %}active{% endif %}">Удалённые · {{ counts.deleted }}</a>
         </nav>
     </section>
     {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
@@ -40,7 +43,7 @@
         <div class="account-list">
             {% for dialog in dialogs %}
             <div class="dialog-item dialog-row">
-                <a class="dialog-main" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id) }}">
+                <a class="dialog-main" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id, other_id=dialog.other_id) }}">
                     <div class="dialog-avatar">
                         {% if dialog.other_avatar %}
                         <img src="{{ url_for('static', filename='uploads/' + dialog.other_avatar) }}" alt="">
@@ -59,24 +62,67 @@
                     {% if dialog.unread %}<span class="dialog-unread">{{ dialog.unread }}</span>{% endif %}
                 </a>
                 {% if folder == 'inbox' %}
-                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='archive') }}" class="dialog-action">
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='archive', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="inbox">
                     <button type="submit" title="В архив">📁</button>
                 </form>
-                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='spam') }}" class="dialog-action">
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='spam', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="inbox">
                     <button type="submit" title="В спам">🚫</button>
                 </form>
-                {% else %}
-                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='inbox') }}" class="dialog-action">
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='deleted', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="inbox">
+                    <button type="submit" title="Удалить">🗑</button>
+                </form>
+                {% elif folder == 'archive' %}
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='inbox', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="archive">
                     <button type="submit" title="Вернуть во входящие">↩</button>
+                </form>
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='spam', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="archive">
+                    <button type="submit" title="В спам">🚫</button>
+                </form>
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='deleted', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="archive">
+                    <button type="submit" title="Удалить">🗑</button>
+                </form>
+                {% elif folder == 'spam' %}
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='inbox', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="spam">
+                    <button type="submit" title="Вернуть во входящие">↩</button>
+                </form>
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='deleted', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="spam">
+                    <button type="submit" title="Удалить">🗑</button>
+                </form>
+                {% else %}
+                <form method="post" action="{{ url_for('move_message', listing_type=dialog.listing_type, listing_id=dialog.listing_id, folder='inbox', other_id=dialog.other_id) }}" class="dialog-action">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <input type="hidden" name="from_folder" value="deleted">
+                    <button type="submit" title="Вернуть во входящие">↩</button>
+                </form>
+                <form method="post" action="{{ url_for('delete_dialog', listing_type=dialog.listing_type, listing_id=dialog.listing_id, other_id=dialog.other_id) }}" class="dialog-action" onsubmit="return confirm('Удалить диалог навсегда?');">
+                    <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
+                    <button type="submit" title="Удалить навсегда">❌</button>
                 </form>
                 {% endif %}
             </div>
             {% else %}
-            <div class="empty-state"><div>💬</div><h3>{% if folder == 'spam' %}В спаме пусто{% elif folder == 'archive' %}В архиве пусто{% else %}Сообщений пока нет{% endif %}</h3><p>{% if folder == 'inbox' %}Напишите продавцу со страницы объявления, чтобы начать переписку.{% else %}Здесь будут диалоги, перемещённые из входящих.{% endif %}</p>{% if folder == 'inbox' %}<a href="{{ url_for('index') }}">К объявлениям</a>{% endif %}</div>
+            <div class="empty-state"><div>💬</div><h3>{% if folder == 'spam' %}В спаме пусто{% elif folder == 'archive' %}В архиве пусто{% elif folder == 'deleted' %}В удалённых пусто{% else %}Сообщений пока нет{% endif %}</h3><p>{% if folder == 'inbox' %}Напишите продавцу со страницы объявления, чтобы начать переписку.{% else %}Здесь будут диалоги, перемещённые из других папок.{% endif %}</p>{% if folder == 'inbox' %}<a href="{{ url_for('index') }}">К объявлениям</a>{% endif %}</div>
             {% endfor %}
         </div>
     </section>
 </main>
-<footer><div class="footer-inner support-footer"><div class="support-block"><strong>Связь с поддержкой</strong><div class="support-links"><a class="support-link telegram-support" href="https://t.me/zooland_support" target="_blank" rel="noopener">Написать в Telegram</a><a class="support-link" href="mailto:support@zooland.ru">Написать на почту</a></div></div></div></footer>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

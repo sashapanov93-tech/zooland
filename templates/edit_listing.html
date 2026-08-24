@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Редактировать объявление — ZooLand</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('account') }}">← В кабинет</a></div></header>
+<main class="edit-page">
+    <div class="edit-title">
+        <p class="eyebrow">Ваше объявление</p><h1>Редактировать</h1>
+        {% if revision and revision.status == 'pending' %}
+        <p>Новая версия уже находится на модерации. При необходимости уточните её ещё раз.</p>
+        <div class="edit-revision-state state-pending"><strong>Изменения на проверке</strong><span>Пока посетители видят предыдущую опубликованную версию.</span></div>
+        {% elif revision and revision.status == 'rejected' %}
+        <p>Изменения вернулись с модерации. Исправьте замечание и отправьте новую версию повторно.</p>
+        <div class="edit-revision-state state-rejected"><strong>Нужно исправить новую версию</strong>{% if revision.moderation_reason %}<span><b>Причина:</b> {{ revision.moderation_reason }}</span>{% else %}<span>Проверьте название, описание, цену, фото и контакты.</span>{% endif %}</div>
+        {% elif item.status == 'rejected' %}
+        <p>Объявление не опубликовано. Исправьте замечание и отправьте его на повторную модерацию.</p>
+        <div class="edit-revision-state state-rejected"><strong>Объявление требует доработки</strong><span><b>Причина:</b> {{ item.moderation_reason or 'Требуется уточнить информацию.' }}</span></div>
+        {% else %}
+        <p>После сохранения изменения проходят повторную модерацию. До решения модератора в каталоге остаётся текущая опубликованная версия.</p>
+        {% endif %}
+    </div>
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    <form class="add-form edit-form" method="post" enctype="multipart/form-data">
+        {% if listing_type == 'service' %}
+        <select name="type" required>{% for value in service_types %}<option value="{{ value }}" {% if item.type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+        <input name="title" value="{{ item.title }}" required placeholder="Название услуги">
+        <input name="city" value="{{ item.city or '' }}" list="cities" required placeholder="Город">
+        <input type="number" name="price" value="{{ item.price or 0 }}" min="0" placeholder="Цена">
+        <div class="pet-types"><span class="pet-types-label">С какими животными работаете:</span><div class="pet-types-grid">{% for pet in pet_types %}<label class="pet-check"><input type="checkbox" name="pet_types" value="{{ pet }}" {% if pet in (item.pet_types or '').split(',') %}checked{% endif %}><span>{{ pet }}</span></label>{% endfor %}</div></div>
+        {% else %}
+        <select name="category" required>{% for value in food_types + accessory_types %}<option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
+        <input name="title" value="{{ item.title }}" required placeholder="Название">
+        <input name="city" value="{{ item.city or '' }}" list="cities" required placeholder="Город">
+        <input type="number" name="price" value="{{ item.price or 0 }}" min="0" placeholder="Цена">
+        {% endif %}
+        <textarea name="description" placeholder="Описание">{{ item.description or '' }}</textarea>
+        {% set selected_contact_methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
+        <fieldset class="contact-choice edit-contact-choice">
+            <legend>Как с вами связаться</legend>
+            <label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" {% if 'phone' in selected_contact_methods %}checked{% endif %}><span>По телефону</span></label>
+            <label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" {% if 'chat' in selected_contact_methods %}checked{% endif %}><span>В сообщениях ZooLand</span></label>
+            <label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram" {% if 'telegram' in selected_contact_methods %}checked{% endif %}><span>В Telegram</span></label>
+            <label class="pet-check"><input type="checkbox" name="refresh_profile_contacts" value="1"><span>Обновить номер и Telegram из профиля</span></label>
+            <p class="form-note">Изменение способов связи и обновление контактов отправятся на модерацию вместе с новой версией.</p>
+        </fieldset>
+        <label class="file-input">Заменить фото (JPG, PNG или WEBP; до 10 шт, до 5 МБ каждое)<input type="file" name="photos" accept="image/png,image/jpeg,image/webp" multiple></label>
+        <button type="submit">{% if revision and revision.status == 'pending' %}Обновить версию на модерации{% elif revision and revision.status == 'rejected' or item.status == 'rejected' %}Исправить и отправить на модерацию{% else %}Сохранить и отправить на модерацию{% endif %}</button>
+    </form>
+    <datalist id="cities">{% for city in russian_cities %}<option value="{{ city }}">{% endfor %}</datalist>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

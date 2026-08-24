@@ -43,15 +43,22 @@
         </div>
         {% endfor %}
     </div>
-    <form method="post" action="{{ url_for('send_message', listing_type=listing_type, listing_id=listing_id) }}" class="thread-form">
+    {% if spam_blocked %}
+    <div class="thread-blocked">🚫 Этот диалог находится в спаме. Вы не можете отправлять сообщения в этом диалоге.</div>
+    {% else %}
+    <form method="post" action="{{ url_for('send_message', listing_type=listing_type, listing_id=listing_id, other_id=other.id) }}" class="thread-form">
+        <input type="hidden" name="other_id" value="{{ other.id }}">
         <input type="text" name="body" placeholder="Написать сообщение..." required autocomplete="off">
         <button type="submit">Отправить</button>
     </form>
+    {% endif %}
 </main>
+{% include "_footer.html" %}
 <script>
 // Прокрутка вниз к последнему сообщению.
 var messages = document.querySelector('.thread-messages');
 if (messages) messages.scrollTop = messages.scrollHeight;
 </script>
+<script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

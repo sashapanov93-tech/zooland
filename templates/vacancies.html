@@ -1,0 +1,16 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Вакансии — ZooLand</title><link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}"></head>
+<body class="careers-body">
+<header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← На главную</a></div></header>
+<main class="careers-page">
+    <section class="careers-hero"><p class="eyebrow">Работа в ZooLand</p><h1>Помогайте людям и питомцам находить друг друга</h1><p>Ищем внимательных и неравнодушных людей. Все четыре позиции предполагают удалённую работу.</p></section>
+    <section class="vacancy-grid" aria-label="Открытые вакансии">
+        {% for slug, vacancy in vacancies.items() %}
+        <article class="vacancy-card"><span class="vacancy-department">{{ vacancy.department }}</span><h2>{{ vacancy.title }}</h2><p>{{ vacancy.summary }}</p><div class="vacancy-meta"><span>{{ vacancy.format }}</span><span>{{ vacancy.schedule }}</span></div><strong class="vacancy-salary">{{ vacancy.salary }}</strong><a class="publish-button" href="{{ url_for('vacancy_detail', slug=slug) }}">Подробнее и откликнуться</a></article>
+        {% endfor %}
+    </section>
+    <section class="career-note"><h2>Не нашли подходящую роль?</h2><p>Напишите в поддержку и расскажите, чем вы можете быть полезны ZooLand.</p><a href="{{ url_for('support') }}">Предложить свою кандидатуру →</a></section>
+</main>
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script></body></html>
