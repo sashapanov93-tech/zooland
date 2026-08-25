@@ -171,9 +171,17 @@ ADVERTISING_CATEGORIES = {
 ADVERTISING_BUDGET_OPTIONS = (
     "До 10 000 ₽", "10 000–30 000 ₽", "30 000–70 000 ₽", "Более 70 000 ₽", "Нужно рассчитать",
 )
-ADVERTISING_OWNER_EDITABLE_STATUSES = frozenset({"new", "discussing", "waiting_materials", "ready", "rejected"})
+ADVERTISING_OWNER_EDITABLE_STATUSES = frozenset({"new", "discussing", "waiting_materials", "ready", "active", "rejected"})
 ADVERTISING_OWNER_FINISHABLE_STATUSES = frozenset({"new", "discussing", "waiting_materials", "ready", "active"})
 ADVERTISING_OWNER_RESUBMITTABLE_STATUSES = frozenset({"completed", "rejected"})
+ADVERTISING_OWNER_REVISION_FIELDS = (
+    "format", "contact_name", "company", "inn", "phone", "telegram", "target_url", "category", "cities",
+    "preferred_dates", "budget", "comment", "headline", "ad_text", "button_label",
+)
+ADVERTISING_ADMIN_OWNER_OVERLAP_FIELDS = (
+    "format", "category", "target_url", "cities", "headline", "ad_text", "button_label",
+)
+ADVERTISING_REVISION_STATUSES = frozenset({"pending", "rejected"})
 ADVERTISING_METRICS = frozenset({"impression", "click"})
 VACANCIES = {
     "listing-moderator": {
@@ -558,6 +566,23 @@ def init_db():
                        WHERE button_label IS NULL OR TRIM(button_label)=''""")
     cursor.execute("""CREATE INDEX IF NOT EXISTS idx_advertising_requests_public
                       ON advertising_requests(status, format, category, start_date, end_date)""")
+    # Изменения активной рекламы проходят отдельную модерацию: опубликованная
+    # версия остаётся неизменной, пока администратор не одобрит черновик.
+    cursor.execute("""CREATE TABLE IF NOT EXISTS advertising_revisions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        request_id INTEGER NOT NULL UNIQUE,
+        owner_id INTEGER NOT NULL,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'rejected')),
+        moderation_reason TEXT,
+        base_updated_at TEXT NOT NULL,
+        submitted_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )""")
+    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_advertising_revisions_queue
+                      ON advertising_revisions(status, submitted_at DESC)""")
+    cursor.execute("""CREATE INDEX IF NOT EXISTS idx_advertising_revisions_owner
+                      ON advertising_revisions(owner_id, updated_at DESC)""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS advertising_daily_metrics (
         request_id INTEGER NOT NULL,
         metric_day TEXT NOT NULL,
@@ -898,10 +923,10 @@ def advertising_placement_state(advertisement, today=None):
     return "Активна в ротации"
 
 
-def advertising_request_form_data(form, user):
+def advertising_request_form_data(form, user, *, advertisement=None, include_creative=False):
     """Нормализует только поля, которые рекламодатель вправе заполнять."""
     telegram_input = form.get("telegram", "").strip()
-    return {
+    data = {
         "format": form.get("format", "").strip(),
         "contact_name": form.get("contact_name", "").strip(),
         "company": form.get("company", "").strip(),
@@ -918,6 +943,14 @@ def advertising_request_form_data(form, user):
         "budget": form.get("budget", "").strip(),
         "comment": form.get("comment", "").strip(),
     }
+    if include_creative:
+        current = advertisement or {}
+        data.update({
+            "headline": form.get("headline", current.get("headline") or "").strip(),
+            "ad_text": form.get("ad_text", current.get("ad_text") or "").strip(),
+            "button_label": form.get("button_label", current.get("button_label") or "Подробнее").strip(),
+        })
+    return data
 
 
 def advertising_request_validation_errors(data, *, consent=True):
@@ -950,8 +983,99 @@ def advertising_request_validation_errors(data, *, consent=True):
         errors.append("выберите предполагаемый бюджет")
     if len(data["comment"]) > 2000:
         errors.append("комментарий не должен превышать 2000 символов")
+    if "headline" in data and len(data["headline"]) > 120:
+        errors.append("заголовок не должен превышать 120 символов")
+    if "ad_text" in data and len(data["ad_text"]) > 320:
+        errors.append("текст объявления не должен превышать 320 символов")
+    if "button_label" in data and not 2 <= len(data["button_label"]) <= 40:
+        errors.append("текст кнопки должен содержать от 2 до 40 символов")
     if not consent:
         errors.append("подтвердите согласие на обработку данных")
+    return errors
+
+
+def get_advertising_revision(request_id):
+    return db().execute(
+        """SELECT id, request_id, owner_id, payload_json, status, moderation_reason,
+                  base_updated_at, submitted_at, updated_at
+             FROM advertising_revisions WHERE request_id=?""",
+        (request_id,),
+    ).fetchone()
+
+
+def advertising_revision_payload(revision):
+    """Возвращает только полный канонический набор разрешённых владельцу полей."""
+    payload = revision_payload(revision)
+    if (set(payload) != set(ADVERTISING_OWNER_REVISION_FIELDS) or
+            any(not isinstance(payload[field], str) for field in ADVERTISING_OWNER_REVISION_FIELDS)):
+        return None
+    return {field: payload[field] for field in ADVERTISING_OWNER_REVISION_FIELDS}
+
+
+def advertising_revision_context(revision):
+    if not revision:
+        return None
+    proposed = advertising_revision_payload(revision)
+    return {
+        "id": revision["id"],
+        "status": revision["status"],
+        "moderation_reason": revision["moderation_reason"],
+        "submitted_at": revision["submitted_at"],
+        "updated_at": revision["updated_at"],
+        "proposed": proposed or {},
+    }
+
+
+def advertising_revision_form_item(advertisement, revision):
+    """Показывает владельцу черновик, не подменяя опубликованную версию в БД."""
+    result = dict(advertisement)
+    proposed = advertising_revision_payload(revision)
+    if proposed:
+        result.update(proposed)
+    if revision:
+        result["revision_id"] = revision["id"]
+        result["revision_status"] = revision["status"]
+        result["revision_reason"] = revision["moderation_reason"]
+    return result
+
+
+def stage_advertising_revision(advertisement, payload):
+    """Создаёт или переотправляет единственную правку к активной рекламе."""
+    now = utcnow()
+    serialized = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    cursor = db().execute(
+        """INSERT INTO advertising_revisions
+              (request_id, owner_id, payload_json, status, moderation_reason,
+               base_updated_at, submitted_at, updated_at)
+            SELECT id, user_id, ?, 'pending', NULL, updated_at, ?, ?
+              FROM advertising_requests
+             WHERE id=? AND user_id=? AND status='active' AND updated_at=?
+            ON CONFLICT(request_id) DO UPDATE SET
+                payload_json=excluded.payload_json,
+                status='pending',
+                moderation_reason=NULL,
+                base_updated_at=excluded.base_updated_at,
+                updated_at=excluded.updated_at
+            WHERE advertising_revisions.owner_id=excluded.owner_id""",
+        (serialized, now, now, advertisement["id"], advertisement["user_id"],
+         advertisement["updated_at"]),
+    )
+    return cursor.rowcount == 1
+
+
+def advertising_revision_validation_errors(payload, advertisement):
+    """Повторно проверяет доверенные поля перед публикацией администратором."""
+    data = dict(payload)
+    data["email"] = advertisement["email"]
+    data["telegram_input"] = payload.get("telegram", "")
+    errors = advertising_request_validation_errors(data)
+    if payload["telegram"] and normalize_telegram(payload["telegram"]) != payload["telegram"]:
+        errors.append("укажите корректный Telegram username")
+    candidate = dict(advertisement)
+    candidate.update(payload)
+    if (not errors and advertisement["status"] == "active" and
+            payload["format"] == "promoted-listing" and not promoted_target_is_public(candidate)):
+        errors.append("для продвижения нужна ссылка на активное объявление из выбранного раздела")
     return errors
 
 
@@ -1905,10 +2029,23 @@ def cleanup_expired():
                           WHERE status='active' AND user_id IS NOT NULL AND expires_at < ?""", (now, now))
     connection.execute("UPDATE services SET status='expired' WHERE status='active' AND expires_at < ?", (now,))
     connection.execute("UPDATE food SET status='expired' WHERE status='active' AND expires_at < ?", (now,))
+    advertising_day = advertising_today()
+    # После автоматического завершения черновик уже не к чему применять.
+    # Удаляем его в той же транзакции, чтобы очередь модерации не копила
+    # неразрешимые правки к истёкшим размещениям.
+    connection.execute(
+        """DELETE FROM advertising_revisions
+                 WHERE request_id IN (
+                       SELECT id FROM advertising_requests
+                        WHERE status='active' AND end_date IS NOT NULL
+                          AND end_date!='' AND end_date<?
+                 )""",
+        (advertising_day,),
+    )
     connection.execute("""UPDATE advertising_requests
                              SET status='completed', updated_at=?
                            WHERE status='active' AND end_date IS NOT NULL AND end_date!='' AND end_date<?""",
-                       (now, advertising_today()))
+                       (now, advertising_day))
     # Для статистики достаточно последних 30 дней с небольшим запасом.
     cutoff = (datetime.now(timezone.utc).date() - timedelta(days=35)).isoformat()
     connection.execute("DELETE FROM listing_daily_metrics WHERE metric_day<?", (cutoff,))
@@ -2555,6 +2692,14 @@ def account_advertising():
              ORDER BY created_at DESC, id DESC""",
         (user["id"],),
     ).fetchall()
+    revisions = {
+        row["request_id"]: row for row in db().execute(
+            """SELECT id, request_id, owner_id, payload_json, status, moderation_reason,
+                      base_updated_at, submitted_at, updated_at
+                 FROM advertising_revisions WHERE owner_id=?""",
+            (user["id"],),
+        ).fetchall()
+    }
     advertisements = []
     today = advertising_today()
     for row in rows:
@@ -2564,6 +2709,13 @@ def account_advertising():
         item["metrics"]["ctr"] = round(item["metrics"]["clicks"] * 100 / impressions, 1) if impressions else 0.0
         item["safe_target_url"] = valid_advertising_target(item.get("target_url"))
         item["placement_state"] = advertising_placement_state(item, today)
+        revision = revisions.get(item["id"])
+        revision_data = advertising_revision_context(revision)
+        item["revision"] = revision_data
+        item["revision_id"] = revision_data["id"] if revision_data else None
+        item["revision_status"] = revision_data["status"] if revision_data else None
+        item["revision_reason"] = revision_data["moderation_reason"] if revision_data else None
+        item["revision_payload"] = revision_data["proposed"] if revision_data else {}
         advertisements.append(item)
     totals = {
         "requests": len(advertisements),
@@ -2595,39 +2747,80 @@ def account_advertising_edit(request_id):
     existing_row = owner_advertising_request(request_id, user["id"])
     if not existing_row:
         abort(404)
-    existing = dict(existing_row)
-    if existing["status"] not in ADVERTISING_OWNER_EDITABLE_STATUSES:
-        flash("Активное или завершённое размещение нельзя редактировать. При необходимости остановите его и отправьте заново.", "error")
+    live_advertisement = dict(existing_row)
+    if live_advertisement["status"] not in ADVERTISING_OWNER_EDITABLE_STATUSES:
+        flash("Завершённое размещение сначала нужно повторно отправить на рассмотрение.", "error")
         return redirect(url_for("account_advertising"))
+    revision = get_advertising_revision(request_id) if live_advertisement["status"] == "active" else None
+    if revision and revision["owner_id"] != user["id"]:
+        abort(404)
+    existing = advertising_revision_form_item(live_advertisement, revision)
     if request.method == "POST":
-        data = advertising_request_form_data(request.form, user)
+        if live_advertisement["status"] == "active":
+            submitted_base_updated_at = request.form.get("base_updated_at")
+            current_base_updated_at = str(live_advertisement["updated_at"] or "")
+            if (not submitted_base_updated_at or
+                    not hmac.compare_digest(submitted_base_updated_at, current_base_updated_at)):
+                flash(
+                    "Активная версия рекламы изменилась или страница устарела. "
+                    "Проверьте актуальные данные и отправьте изменения ещё раз.",
+                    "error",
+                )
+                return redirect(url_for("account_advertising_edit", request_id=request_id))
+        data = advertising_request_form_data(
+            request.form, user, advertisement=existing, include_creative=True
+        )
         errors = advertising_request_validation_errors(data)
+        payload = {field: data[field] for field in ADVERTISING_OWNER_REVISION_FIELDS}
+        if (not errors and live_advertisement["status"] == "active" and
+                payload["format"] == "promoted-listing"):
+            candidate = dict(live_advertisement)
+            candidate.update(payload)
+            if not promoted_target_is_public(candidate):
+                errors.append("для продвижения нужна ссылка на активное объявление из выбранного раздела")
         if not errors:
-            editable_statuses = tuple(sorted(ADVERTISING_OWNER_EDITABLE_STATUSES))
+            if live_advertisement["status"] == "active":
+                if not stage_advertising_revision(live_advertisement, payload):
+                    db().rollback()
+                    flash("Активная версия изменилась. Обновите страницу и повторите попытку.", "error")
+                    return redirect(url_for("account_advertising_edit", request_id=request_id))
+                db().commit()
+                flash(
+                    f"Изменения заявки № {request_id} отправлены на модерацию. "
+                    "Текущая опубликованная версия останется без изменений до решения администратора.",
+                    "success",
+                )
+                return redirect(url_for("account_advertising"))
+            editable_statuses = tuple(sorted(ADVERTISING_OWNER_EDITABLE_STATUSES - {"active"}))
             placeholders = ", ".join("?" for _ in editable_statuses)
+            assignments = ", ".join(f"{field}=?" for field in ADVERTISING_OWNER_REVISION_FIELDS)
             cursor = db().execute(
                 f"""UPDATE advertising_requests
-                        SET format=?, contact_name=?, company=?, inn=?, email=?, phone=?, telegram=?,
-                            target_url=?, category=?, cities=?, preferred_dates=?, budget=?, comment=?,
-                            status='new', updated_at=?
+                        SET {assignments}, status='new', updated_at=?
                       WHERE id=? AND user_id=? AND status IN ({placeholders})""",
-                (data["format"], data["contact_name"], data["company"], data["inn"], data["email"],
-                 data["phone"], data["telegram"], data["target_url"], data["category"], data["cities"],
-                 data["preferred_dates"], data["budget"], data["comment"], utcnow(), request_id, user["id"],
-                 *editable_statuses),
+                (*[payload[field] for field in ADVERTISING_OWNER_REVISION_FIELDS], utcnow(),
+                 request_id, user["id"], *editable_statuses),
             )
-            db().commit()
             if cursor.rowcount == 1:
+                db().execute(
+                    "DELETE FROM advertising_revisions WHERE request_id=? AND owner_id=?",
+                    (request_id, user["id"]),
+                )
+                db().commit()
                 flash(f"Заявка № {request_id} обновлена и снова отправлена на проверку.", "success")
                 return redirect(url_for("account_advertising"))
+            db().rollback()
             flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
             return redirect(url_for("account_advertising"))
         flash("Не удалось обновить заявку: " + "; ".join(errors) + ".", "error")
-        existing.update({key: value for key, value in data.items() if key != "telegram_input"})
+        existing.update(payload)
+    revision_data = advertising_revision_context(revision)
     return render_template(
         "account_advertising_edit.html", advertisement=existing, formats=ADVERTISING_FORMATS,
         categories=ADVERTISING_CATEGORIES, statuses=ADVERTISING_STATUSES,
-        budget_options=ADVERTISING_BUDGET_OPTIONS, tab="advertising",
+        budget_options=ADVERTISING_BUDGET_OPTIONS, live_advertisement=live_advertisement,
+        revision=revision_data, is_live=live_advertisement["status"] == "active",
+        base_updated_at=live_advertisement["updated_at"], tab="advertising",
     )
 
 
@@ -2649,10 +2842,16 @@ def account_advertising_finish(request_id):
               WHERE id=? AND user_id=? AND status IN ({placeholders})""",
         (utcnow(), request_id, user["id"], *finishable_statuses),
     )
-    db().commit()
     if cursor.rowcount != 1:
+        db().rollback()
         flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
-    elif existing["status"] == "active":
+        return redirect(url_for("account_advertising"))
+    db().execute(
+        "DELETE FROM advertising_revisions WHERE request_id=? AND owner_id=?",
+        (request_id, user["id"]),
+    )
+    db().commit()
+    if existing["status"] == "active":
         flash(f"Показ рекламы по заявке № {request_id} остановлен.", "success")
     else:
         flash(f"Заявка № {request_id} отозвана.", "success")
@@ -2677,10 +2876,15 @@ def account_advertising_resubmit(request_id):
               WHERE id=? AND user_id=? AND status IN ({placeholders})""",
         (utcnow(), request_id, user["id"], *resubmittable_statuses),
     )
-    db().commit()
     if cursor.rowcount == 1:
+        db().execute(
+            "DELETE FROM advertising_revisions WHERE request_id=? AND owner_id=?",
+            (request_id, user["id"]),
+        )
+        db().commit()
         flash(f"Заявка № {request_id} снова отправлена на рассмотрение.", "success")
     else:
+        db().rollback()
         flash("Статус заявки изменился. Обновите страницу и повторите попытку.", "error")
     return redirect(url_for("account_advertising"))
 
@@ -2716,6 +2920,13 @@ def admin_advertising():
     query, params = "SELECT * FROM advertising_requests", ()
     if selected_status:
         query, params = query + " WHERE status=?", (selected_status,)
+    revisions = {
+        row["request_id"]: row for row in db().execute(
+            """SELECT id, request_id, owner_id, payload_json, status, moderation_reason,
+                      base_updated_at, submitted_at, updated_at
+                 FROM advertising_revisions"""
+        ).fetchall()
+    }
     requests = []
     today = advertising_today()
     for row in db().execute(query + " ORDER BY created_at DESC", params).fetchall():
@@ -2723,10 +2934,117 @@ def admin_advertising():
         item["metrics"] = advertising_metrics(item["id"])
         item["safe_target_url"] = valid_advertising_target(item.get("target_url"))
         item["placement_state"] = advertising_placement_state(item, today)
+        revision_data = advertising_revision_context(revisions.get(item["id"]))
+        item["revision"] = revision_data
+        item["revision_id"] = revision_data["id"] if revision_data else None
+        item["revision_status"] = revision_data["status"] if revision_data else None
+        item["revision_reason"] = revision_data["moderation_reason"] if revision_data else None
+        item["revision_payload"] = revision_data["proposed"] if revision_data else {}
         requests.append(item)
+    pending_revision_count = sum(
+        revision["status"] == "pending" for revision in revisions.values()
+    )
     return render_template("admin_advertising.html", advertising_requests=requests,
                            formats=ADVERTISING_FORMATS, categories=ADVERTISING_CATEGORIES,
-                           statuses=ADVERTISING_STATUSES, selected_status=selected_status)
+                           statuses=ADVERTISING_STATUSES, selected_status=selected_status,
+                           pending_revision_count=pending_revision_count,
+                           moderation_reasons=MODERATION_REASONS)
+
+
+@app.route("/admin/advertising/<int:request_id>/revision/approve", methods=["POST"])
+@admin_required
+def admin_approve_advertising_revision(request_id):
+    """Атомарно публикует только разрешённые поля ожидающей правки."""
+    revision = get_advertising_revision(request_id)
+    if not revision or revision["status"] != "pending":
+        abort(404)
+    existing_row = db().execute(
+        "SELECT * FROM advertising_requests WHERE id=? AND user_id=?",
+        (request_id, revision["owner_id"]),
+    ).fetchone()
+    if not existing_row:
+        abort(404)
+    existing = dict(existing_row)
+    if existing["status"] != "active":
+        flash("Правку нельзя применить: размещение больше не активно.", "error")
+        return redirect(url_for("admin_advertising"))
+    if existing["updated_at"] != revision["base_updated_at"]:
+        flash(
+            "Активная версия рекламы изменилась после отправки правки. "
+            "Владельцу нужно проверить и повторно отправить изменения.",
+            "error",
+        )
+        return redirect(url_for("admin_advertising"))
+    payload = advertising_revision_payload(revision)
+    if payload is None:
+        flash("Правка повреждена и не была опубликована.", "error")
+        return redirect(url_for("admin_advertising"))
+    errors = advertising_revision_validation_errors(payload, existing)
+    if errors:
+        flash("Правка не прошла повторную проверку: " + "; ".join(errors) + ".", "error")
+        return redirect(url_for("admin_advertising"))
+
+    now = utcnow()
+    assignments = ", ".join(f"{field}=?" for field in ADVERTISING_OWNER_REVISION_FIELDS)
+    updated = db().execute(
+        f"""UPDATE advertising_requests
+                SET {assignments}, updated_at=?
+              WHERE id=? AND user_id=? AND status='active' AND updated_at=?""",
+        (*[payload[field] for field in ADVERTISING_OWNER_REVISION_FIELDS], now,
+         request_id, revision["owner_id"], revision["base_updated_at"]),
+    )
+    if updated.rowcount != 1:
+        db().rollback()
+        flash("Активная версия изменилась. Правка не была опубликована.", "error")
+        return redirect(url_for("admin_advertising"))
+    deleted = db().execute(
+        """DELETE FROM advertising_revisions
+                 WHERE id=? AND request_id=? AND owner_id=? AND status='pending'
+                   AND updated_at=? AND payload_json=? AND base_updated_at=?""",
+        (revision["id"], request_id, revision["owner_id"], revision["updated_at"],
+         revision["payload_json"], revision["base_updated_at"]),
+    )
+    if deleted.rowcount != 1:
+        db().rollback()
+        flash("Правка изменилась во время проверки и не была опубликована.", "error")
+        return redirect(url_for("admin_advertising"))
+    db().commit()
+    flash(f"Изменения рекламы по заявке № {request_id} опубликованы.", "success")
+    return redirect(url_for("admin_advertising"))
+
+
+@app.route("/admin/advertising/<int:request_id>/revision/reject", methods=["POST"])
+@admin_required
+def admin_reject_advertising_revision(request_id):
+    """Отклоняет только черновик, не меняя опубликованную рекламу."""
+    revision = get_advertising_revision(request_id)
+    if not revision or revision["status"] != "pending":
+        abort(404)
+    existing = db().execute(
+        "SELECT id, status FROM advertising_requests WHERE id=? AND user_id=?",
+        (request_id, revision["owner_id"]),
+    ).fetchone()
+    if not existing:
+        abort(404)
+    if existing["status"] != "active":
+        flash("Правку нельзя отклонить: размещение больше не активно.", "error")
+        return redirect(url_for("admin_advertising"))
+    reason = moderation_reason_from_form()
+    updated = db().execute(
+        """UPDATE advertising_revisions
+              SET status='rejected', moderation_reason=?, updated_at=?
+            WHERE id=? AND request_id=? AND owner_id=? AND status='pending'
+              AND updated_at=? AND payload_json=? AND base_updated_at=?""",
+        (reason, utcnow(), revision["id"], request_id, revision["owner_id"],
+         revision["updated_at"], revision["payload_json"], revision["base_updated_at"]),
+    )
+    if updated.rowcount != 1:
+        db().rollback()
+        flash("Правка изменилась во время проверки. Решение не сохранено.", "error")
+        return redirect(url_for("admin_advertising"))
+    db().commit()
+    flash(f"Изменения рекламы по заявке № {request_id} отклонены.", "success")
+    return redirect(url_for("admin_advertising"))
 
 
 @app.route("/admin/advertising/<int:request_id>", methods=["POST"])
@@ -2779,12 +3097,43 @@ def update_advertising_request(request_id):
     if errors:
         flash("Не удалось сохранить размещение: " + "; ".join(errors) + ".", "error")
         return redirect(url_for("admin_advertising"))
-    db().execute("""UPDATE advertising_requests
+    new_owner_overlap = {
+        "format": ad_format,
+        "category": category,
+        "target_url": target_url,
+        "cities": cities,
+        "headline": headline,
+        "ad_text": ad_text,
+        "button_label": button_label,
+    }
+    old_owner_overlap = {
+        field: (existing.get(field) or "") for field in ADVERTISING_ADMIN_OWNER_OVERLAP_FIELDS
+    }
+    owner_overlap_unchanged = all(
+        new_owner_overlap[field] == old_owner_overlap[field]
+        for field in ADVERTISING_ADMIN_OWNER_OVERLAP_FIELDS
+    )
+    new_updated_at = utcnow()
+    updated = db().execute("""UPDATE advertising_requests
                         SET status=?, admin_note=?, format=?, category=?, target_url=?, cities=?,
                             headline=?, ad_text=?, button_label=?, start_date=?, end_date=?, updated_at=?
-                      WHERE id=?""",
+                      WHERE id=? AND updated_at=?""",
                  (status, note, ad_format, category, target_url, cities, headline, ad_text,
-                  button_label, start_date or None, end_date or None, utcnow(), request_id))
+                  button_label, start_date or None, end_date or None, new_updated_at,
+                  request_id, existing["updated_at"]))
+    if updated.rowcount != 1:
+        db().rollback()
+        flash("Размещение изменилось во время сохранения. Обновите страницу и повторите попытку.", "error")
+        return redirect(url_for("admin_advertising"))
+    if status != "active":
+        db().execute("DELETE FROM advertising_revisions WHERE request_id=?", (request_id,))
+    elif owner_overlap_unchanged and existing.get("user_id") is not None:
+        db().execute(
+            """UPDATE advertising_revisions
+                  SET base_updated_at=?
+                WHERE request_id=? AND owner_id=? AND status='pending' AND base_updated_at=?""",
+            (new_updated_at, request_id, existing["user_id"], existing["updated_at"]),
+        )
     db().commit()
     flash(f"Статус рекламной заявки № {request_id} обновлён.", "success")
     return redirect(url_for("admin_advertising"))

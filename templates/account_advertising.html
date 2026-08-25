@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Моя реклама — ZooLand</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-owner-ads-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260825-ad-revisions-1') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -62,6 +62,9 @@
             {% set clicks = ad_metrics.clicks|default(0, true)|int %}
             {% set ctr = (clicks * 100 / impressions) if impressions else 0 %}
             {% set placement_state = advertisement.placement_state|default('', true) %}
+            {% set revision = advertisement.revision|default({}, true) %}
+            {% set revision_status = advertisement.revision_status|default(revision.status|default('', true), true) %}
+            {% set revision_reason = advertisement.revision_reason|default(revision.moderation_reason|default('', true), true) %}
             {% set status_class = 'status-open' if ad_status == 'active' else ('status-completed' if ad_status == 'completed' else ('status-rejected' if ad_status == 'rejected' else 'status-pending')) %}
             <article class="advertising-owner-card advertising-owner-status-{{ ad_status }}">
                 <div class="advertising-owner-card-main">
@@ -76,6 +79,17 @@
                     <p class="advertising-placement-state{% if ad_status == 'active' and ('ротац' in placement_state|lower or not placement_state) %} is-live{% endif %}">
                         {% if placement_state %}{{ placement_state }}{% elif ad_status == 'active' %}Активна в ротации{% elif ad_status == 'completed' %}Показ завершён{% else %}Пока не показывается{% endif %}
                     </p>
+
+                    {% if revision_status %}
+                    <div class="advertising-owner-revision{% if revision_status == 'rejected' %} is-rejected{% else %} is-pending{% endif %}" role="status">
+                        <span class="advertising-owner-revision-icon" aria-hidden="true">{% if revision_status == 'rejected' %}!{% else %}↻{% endif %}</span>
+                        <div>
+                            <strong>{% if revision_status == 'rejected' %}Изменения нужно исправить{% else %}Изменения на проверке{% endif %}</strong>
+                            <p>{% if revision_status == 'rejected' %}Текущая версия останется без изменений до нового решения. Исправьте предложенные изменения и отправьте их снова.{% else %}Текущая версия останется без изменений до решения администратора.{% endif %}</p>
+                            {% if revision_status == 'rejected' and revision_reason %}<p class="advertising-owner-revision-reason"><b>Причина:</b> {{ revision_reason }}</p>{% endif %}
+                        </div>
+                    </div>
+                    {% endif %}
 
                     <dl class="advertising-owner-details">
                         <div><dt>Раздел</dt><dd>{{ categories.get(advertisement.category, advertisement.category)|default('Весь сайт', true) }}</dd></div>
@@ -106,7 +120,7 @@
                         <button class="advertising-owner-primary" type="submit">Отправить без изменений</button>
                     </form>
                     {% else %}
-                        {% if ad_status != 'active' %}<a class="advertising-owner-secondary" href="{{ url_for('account_advertising_edit', request_id=advertisement.id) }}">Редактировать</a>{% endif %}
+                    <a class="advertising-owner-secondary" href="{{ url_for('account_advertising_edit', request_id=advertisement.id) }}">{% if ad_status == 'active' and revision_status == 'pending' %}Уточнить изменения{% elif ad_status == 'active' and revision_status == 'rejected' %}Исправить изменения{% elif ad_status == 'active' %}Предложить изменения{% else %}Редактировать{% endif %}</a>
                     <form method="post" action="{{ url_for('account_advertising_finish', request_id=advertisement.id) }}" onsubmit="return confirm('{% if ad_status == 'active' %}Остановить показ этой рекламы?{% else %}Отозвать эту рекламную заявку?{% endif %}');">
                         <button class="advertising-owner-stop" type="submit">{% if ad_status == 'active' %}Остановить показ{% else %}Отозвать заявку{% endif %}</button>
                     </form>

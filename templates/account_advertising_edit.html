@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Редактирование рекламной заявки — ZooLand</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-owner-ads-1') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260825-ad-revisions-1') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -20,7 +20,11 @@
     </div>
 </header>
 
-{% set ad_status = advertisement.status|default('new', true) %}
+{% set live_ad = live_advertisement|default(advertisement, true) %}
+{% set is_currently_live = is_live|default(live_ad.status|default('') == 'active') %}
+{% set ad_revision = revision|default({}, true) %}
+{% set revision_status = ad_revision.status|default(advertisement.revision_status|default('', true), true) %}
+{% set revision_reason = ad_revision.moderation_reason|default(advertisement.revision_reason|default('', true), true) %}
 {% set available_budgets = budget_options|default(['До 10 000 ₽', '10 000–30 000 ₽', '30 000–70 000 ₽', 'Более 70 000 ₽', 'Нужно рассчитать'], true) %}
 {% set owner_email = account_user.email if account_user else advertisement.email|default('', true) %}
 <main class="account-page advertising-owner-edit-page">
@@ -30,10 +34,10 @@
         <p class="eyebrow">Моя реклама · заявка № {{ advertisement.id }}</p>
         <div class="advertising-owner-edit-title">
             <div>
-                <h1>Редактирование заявки</h1>
-                <p>{{ advertisement.company|default('Без названия', true) }} · {{ statuses.get(ad_status, ad_status) }}</p>
+                <h1>{% if is_currently_live and revision_status == 'pending' %}Уточнить изменения{% elif is_currently_live and revision_status == 'rejected' %}Исправить изменения{% elif is_currently_live %}Предложить изменения{% else %}Редактирование заявки{% endif %}</h1>
+                <p>{{ advertisement.company|default('Без названия', true) }}</p>
             </div>
-            <span class="listing-status-pill {% if ad_status == 'rejected' %}status-rejected{% else %}status-pending{% endif %}">{{ statuses.get(ad_status, ad_status) }}</span>
+            {% if revision_status %}<span class="advertising-revision-pill{% if revision_status == 'rejected' %} is-rejected{% endif %}">{% if revision_status == 'rejected' %}Нужны исправления{% else %}На проверке{% endif %}</span>{% endif %}
         </div>
     </section>
 
@@ -41,38 +45,64 @@
         {% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}
     {% endwith %}
 
-    <div class="advertising-owner-edit-warning" role="note">
+    <div class="advertising-owner-edit-warning{% if revision_status == 'rejected' %} is-rejected{% endif %}" role="{% if revision_status == 'rejected' %}alert{% else %}note{% endif %}">
         <span aria-hidden="true">!</span>
-        <div><strong>Изменения пройдут повторную проверку</strong><p>После сохранения заявка вернётся на согласование. Включить показ и изменить подготовленный публичный креатив может только администратор.</p></div>
+        <div>
+            <strong>{% if revision_status == 'rejected' %}Изменения нужно исправить{% elif revision_status == 'pending' %}Вы уточняете версию на проверке{% elif is_currently_live %}Текущая версия останется без изменений{% else %}Изменения пройдут повторную проверку{% endif %}</strong>
+            <p>{% if is_currently_live %}После сохранения предложенная версия отправится администратору. До её одобрения текущая версия останется без изменений.{% else %}После сохранения заявка вернётся на согласование. Публикацию включает администратор после проверки.{% endif %}</p>
+            {% if revision_status == 'rejected' and revision_reason %}<p class="advertising-owner-edit-reason"><b>Причина:</b> {{ revision_reason }}</p>{% endif %}
+        </div>
     </div>
 
     <section class="advertising-owner-edit-card">
         <div class="advertising-owner-edit-copy">
             <p class="eyebrow">Данные заявки</p>
-            <h2>Проверьте информацию для размещения</h2>
-            <p>Измените формат, контакты или параметры показа. Служебный статус, текст рекламного блока и фактические даты публикации здесь недоступны.</p>
+            <h2>Подготовьте новую версию</h2>
+            <p>Измените параметры размещения, публичный креатив или контакты. Служебные настройки кампании остаются под контролем администратора.</p>
         </div>
 
         <form method="post" class="advertising-form advertising-owner-edit-form">
-            <label>Формат<select name="format" required>{% for value,item in formats.items() %}<option value="{{ value }}" {% if request.form.get('format', advertisement.format) == value %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label>
-            <label>Контактное лицо<input name="contact_name" maxlength="80" value="{{ request.form.get('contact_name', advertisement.contact_name|default('', true)) }}" autocomplete="name" required></label>
-            <label>Компания или бренд<input name="company" maxlength="120" value="{{ request.form.get('company', advertisement.company|default('', true)) }}" required></label>
-            <label>ИНН<input name="inn" inputmode="numeric" pattern="[0-9]{10}|[0-9]{12}" maxlength="12" value="{{ request.form.get('inn', advertisement.inn|default('', true)) }}" placeholder="10 или 12 цифр" required></label>
-            <label>Email аккаунта <span>Изменяется в настройках профиля</span><input name="email" type="email" value="{{ owner_email }}" autocomplete="email" readonly aria-readonly="true" required></label>
-            <label>Телефон <span>(необязательно)</span><input name="phone" maxlength="30" value="{{ request.form.get('phone', advertisement.phone|default('', true)) }}" autocomplete="tel"></label>
-            <label>Telegram <span>(необязательно)</span><input name="telegram" maxlength="40" value="{{ request.form.get('telegram', advertisement.telegram|default('', true)) }}" placeholder="@username"></label>
-            <label>Ссылка на объявление или сайт<input name="target_url" type="text" maxlength="500" value="{{ request.form.get('target_url', advertisement.target_url|default('', true)) }}" placeholder="https://..." required></label>
-            <label>Раздел показа<select name="category" required>{% for value,label in categories.items() %}<option value="{{ value }}" {% if request.form.get('category', advertisement.category|default('all', true)) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
-            <label>Города <span>(необязательно)</span><input name="cities" maxlength="300" value="{{ request.form.get('cities', advertisement.cities|default('', true)) }}" placeholder="Например: Москва, Казань"></label>
-            <label>Желаемые даты <span>(необязательно)</span><input name="preferred_dates" maxlength="160" value="{{ request.form.get('preferred_dates', advertisement.preferred_dates|default('', true)) }}" placeholder="Например: 1–15 сентября"></label>
-            <label>Предполагаемый бюджет<select name="budget" required><option value="">Выберите бюджет</option>{% for value in available_budgets %}<option value="{{ value }}" {% if request.form.get('budget', advertisement.budget|default('', true)) == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
-            <label class="full-row">Комментарий <span>(необязательно)</span><textarea name="comment" maxlength="2000" rows="6" placeholder="Что рекламируем и какого результата ожидаете">{{ request.form.get('comment', advertisement.comment|default('', true)) }}</textarea></label>
+            {% if is_currently_live %}<input type="hidden" name="base_updated_at" value="{{ base_updated_at }}">{% endif %}
+            <fieldset class="advertising-owner-edit-section full-row">
+                <legend><span>1</span> Размещение</legend>
+                <div class="advertising-owner-edit-grid">
+                    <label for="owner-ad-format">Формат<select id="owner-ad-format" name="format" required>{% for value,item in formats.items() %}<option value="{{ value }}" {% if request.form.get('format', advertisement.format) == value %}selected{% endif %}>{{ item.title }}</option>{% endfor %}</select></label>
+                    <label for="owner-ad-category">Раздел показа<select id="owner-ad-category" name="category" required>{% for value,label in categories.items() %}<option value="{{ value }}" {% if request.form.get('category', advertisement.category|default('all', true)) == value %}selected{% endif %}>{{ label }}</option>{% endfor %}</select></label>
+                    <label class="owner-ad-field-full" for="owner-ad-target">Ссылка на объявление или сайт<input id="owner-ad-target" name="target_url" type="text" maxlength="500" value="{{ request.form.get('target_url', advertisement.target_url|default('', true)) }}" placeholder="https://..." required></label>
+                    <label for="owner-ad-cities">Города <span>(необязательно)</span><input id="owner-ad-cities" name="cities" maxlength="300" value="{{ request.form.get('cities', advertisement.cities|default('', true)) }}" placeholder="Например: Москва, Казань"></label>
+                    <label for="owner-ad-dates">Желаемые даты <span>(необязательно)</span><input id="owner-ad-dates" name="preferred_dates" maxlength="160" value="{{ request.form.get('preferred_dates', advertisement.preferred_dates|default('', true)) }}" placeholder="Например: первая половина сентября"></label>
+                </div>
+            </fieldset>
+
+            <fieldset class="advertising-owner-edit-section full-row">
+                <legend><span>2</span> Публичный креатив</legend>
+                <p class="advertising-owner-edit-section-note">Этот заголовок, текст и кнопка будут видны посетителям после одобрения изменений.</p>
+                <div class="advertising-owner-edit-grid">
+                    <label for="owner-ad-headline">Заголовок <span>(необязательно)</span><input id="owner-ad-headline" name="headline" maxlength="120" value="{{ request.form.get('headline', advertisement.headline|default('', true)) }}" placeholder="По умолчанию — название компании"></label>
+                    <label for="owner-ad-button">Текст кнопки<input id="owner-ad-button" name="button_label" maxlength="40" value="{{ request.form.get('button_label', advertisement.button_label|default('Подробнее', true)) }}" required></label>
+                    <label class="owner-ad-field-full" for="owner-ad-text">Текст объявления <span>(необязательно)</span><textarea id="owner-ad-text" name="ad_text" maxlength="320" rows="4" placeholder="Коротко опишите предложение">{{ request.form.get('ad_text', advertisement.ad_text|default('', true)) }}</textarea></label>
+                </div>
+            </fieldset>
+
+            <fieldset class="advertising-owner-edit-section full-row">
+                <legend><span>3</span> Рекламодатель и связь</legend>
+                <div class="advertising-owner-edit-grid">
+                    <label for="owner-ad-contact">Контактное лицо<input id="owner-ad-contact" name="contact_name" maxlength="80" value="{{ request.form.get('contact_name', advertisement.contact_name|default('', true)) }}" autocomplete="name" required></label>
+                    <label for="owner-ad-company">Компания или бренд<input id="owner-ad-company" name="company" maxlength="120" value="{{ request.form.get('company', advertisement.company|default('', true)) }}" required></label>
+                    <label for="owner-ad-inn">ИНН<input id="owner-ad-inn" name="inn" inputmode="numeric" pattern="[0-9]{10}|[0-9]{12}" maxlength="12" value="{{ request.form.get('inn', advertisement.inn|default('', true)) }}" placeholder="10 или 12 цифр" required></label>
+                    <label for="owner-ad-email">Email аккаунта <span>Изменяется в настройках профиля</span><input id="owner-ad-email" name="email" type="email" value="{{ owner_email }}" autocomplete="email" readonly aria-readonly="true" required></label>
+                    <label for="owner-ad-phone">Телефон <span>(необязательно)</span><input id="owner-ad-phone" name="phone" maxlength="30" value="{{ request.form.get('phone', advertisement.phone|default('', true)) }}" autocomplete="tel"></label>
+                    <label for="owner-ad-telegram">Telegram <span>(необязательно)</span><input id="owner-ad-telegram" name="telegram" maxlength="40" value="{{ request.form.get('telegram', advertisement.telegram|default('', true)) }}" placeholder="@username"></label>
+                    <label for="owner-ad-budget">Предполагаемый бюджет<select id="owner-ad-budget" name="budget" required><option value="">Выберите бюджет</option>{% for value in available_budgets %}<option value="{{ value }}" {% if request.form.get('budget', advertisement.budget|default('', true)) == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select></label>
+                    <label class="owner-ad-field-full" for="owner-ad-comment">Комментарий <span>(необязательно)</span><textarea id="owner-ad-comment" name="comment" maxlength="2000" rows="5" placeholder="Что рекламируем и какого результата ожидаете">{{ request.form.get('comment', advertisement.comment|default('', true)) }}</textarea></label>
+                </div>
+            </fieldset>
 
             <div class="advertising-owner-edit-actions full-row">
-                <p>После сохранения заявка будет отправлена на повторную проверку.</p>
+                <p>{% if is_currently_live %}Сохранится новая версия на проверке; текущая версия останется без изменений до решения.{% else %}После сохранения заявка будет отправлена на повторную проверку.{% endif %}</p>
                 <div>
                     <a class="advertising-owner-secondary" href="{{ url_for('account_advertising') }}">Отмена</a>
-                    <button type="submit">Сохранить и отправить на проверку</button>
+                    <button type="submit">{% if revision_status == 'pending' %}Обновить версию на проверке{% elif revision_status == 'rejected' %}Исправить и отправить снова{% else %}Сохранить и отправить на проверку{% endif %}</button>
                 </div>
             </div>
         </form>

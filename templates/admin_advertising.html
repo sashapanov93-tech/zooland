@@ -1,10 +1,25 @@
+{% macro advertising_revision_row(label, current_value, proposed_value, state, multiline=false) -%}
+{% set normalized_current = '' if current_value is none else current_value %}
+{% set normalized_proposed = '' if proposed_value is none else proposed_value %}
+{% if normalized_current != normalized_proposed %}
+{% set state.has_changes = true %}
+<div class="advertising-revision-diff-row{% if multiline %} is-multiline{% endif %}">
+    <h4>{{ label }}</h4>
+    <div class="advertising-revision-versions">
+        <div class="advertising-revision-value is-current"><span>Сейчас</span><p>{{ normalized_current if normalized_current else 'Не указано' }}</p></div>
+        <span class="advertising-revision-arrow" aria-hidden="true">→</span>
+        <div class="advertising-revision-value is-proposed"><span>Предложено</span><p>{{ normalized_proposed if normalized_proposed else 'Не указано' }}</p></div>
+    </div>
+</div>
+{% endif %}
+{%- endmacro %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <title>Рекламные заявки — ZooLand</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260824-admin-2') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260825-ad-revisions-1') }}">
 </head>
 <body class="advertising-admin-page">
 <header class="site-header"><div class="header-inner">
@@ -12,11 +27,14 @@
     <div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_job_applications') }}">Отклики</a><a class="back-link" href="{{ url_for('admin_users') }}">Пользователи</a></div>
 </div></header>
 <main class="account-page">
-    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Рекламные заявки · {{ advertising_requests|length }}</h1><p>Настройте креатив и сроки. Статус «Активна» публикует готовое размещение автоматически.</p></section>
+    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Рекламные заявки · {{ advertising_requests|length }}</h1><p>Настройте креатив и сроки. Статус «Активна» публикует готовое размещение автоматически.{% if pending_revision_count|default(0, true) %} На проверке изменений: {{ pending_revision_count }}.{% endif %}</p></section>
     {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <nav class="application-filters" aria-label="Фильтр рекламных заявок"><a class="{% if not selected_status %}active{% endif %}" href="{{ url_for('admin_advertising') }}"{% if not selected_status %} aria-current="page"{% endif %}>Все</a>{% for value,label in statuses.items() %}<a class="{% if selected_status == value %}active{% endif %}" href="{{ url_for('admin_advertising', status=value) }}"{% if selected_status == value %} aria-current="page"{% endif %}>{{ label }}</a>{% endfor %}</nav>
     <section class="application-admin-list">
     {% for item in advertising_requests %}
+        {% set ad_revision = item.revision|default({}, true) %}
+        {% set revision_status = item.revision_status|default(ad_revision.status|default('', true), true) %}
+        {% set proposed = ad_revision.proposed|default(item.revision_payload|default({}, true), true) %}
         <article class="application-admin-card advertising-admin-card">
             <div class="advertising-admin-overview">
                 <p class="eyebrow">Заявка № {{ item.id }} · {{ statuses[item.status] }}</p>
@@ -30,10 +48,61 @@
                 <small>Получена {{ item.created_at[:16].replace('T', ' ') }}</small>
                 <details><summary>Исходная заявка</summary>{% if item.preferred_dates %}<h3>Желаемые даты</h3><p>{{ item.preferred_dates }}</p>{% endif %}<h3>Комментарий</h3><p class="preserve-lines">{{ item.comment or 'Не указан' }}</p></details>
             </div>
+
+            <div class="advertising-admin-workspace">
+            {% if revision_status and proposed %}
+                {% set diff_state = namespace(has_changes=false) %}
+                <section class="advertising-revision-panel{% if revision_status == 'rejected' %} is-rejected{% endif %}" aria-labelledby="advertising-revision-title-{{ item.id }}">
+                    <div class="advertising-revision-heading">
+                        <div>
+                            <p class="eyebrow">Изменения от рекламодателя</p>
+                            <h3 id="advertising-revision-title-{{ item.id }}">Сравнение версий</h3>
+                        </div>
+                        <span class="advertising-revision-pill{% if revision_status == 'rejected' %} is-rejected{% endif %}">{% if revision_status == 'rejected' %}Отклонены{% else %}Ожидают решения{% endif %}</span>
+                    </div>
+                    <p class="advertising-revision-live-note">{% if item.status == 'active' %}<strong>Текущая версия останется без изменений до решения.</strong> Предложенная версия применится только после одобрения.{% else %}Исходная версия заявки не изменится до одобрения предложенных правок.{% endif %}</p>
+
+                    <div class="advertising-revision-diff" aria-label="Изменённые поля заявки № {{ item.id }}">
+                        {{ advertising_revision_row('Формат', formats.get(item.format, {}).get('title', item.format), formats.get(proposed.get('format', item.format), {}).get('title', proposed.get('format', item.format)), diff_state) }}
+                        {{ advertising_revision_row('Раздел показа', categories.get(item.category, item.category), categories.get(proposed.get('category', item.category), proposed.get('category', item.category)), diff_state) }}
+                        {{ advertising_revision_row('Города', item.cities, proposed.get('cities', item.cities), diff_state) }}
+                        {{ advertising_revision_row('Целевая ссылка', item.target_url, proposed.get('target_url', item.target_url), diff_state, true) }}
+                        {{ advertising_revision_row('Желаемые даты', item.preferred_dates, proposed.get('preferred_dates', item.preferred_dates), diff_state) }}
+                        {{ advertising_revision_row('Заголовок', item.headline, proposed.get('headline', item.headline), diff_state) }}
+                        {{ advertising_revision_row('Текст объявления', item.ad_text, proposed.get('ad_text', item.ad_text), diff_state, true) }}
+                        {{ advertising_revision_row('Текст кнопки', item.button_label, proposed.get('button_label', item.button_label), diff_state) }}
+                        {{ advertising_revision_row('Контактное лицо', item.contact_name, proposed.get('contact_name', item.contact_name), diff_state) }}
+                        {{ advertising_revision_row('Компания или бренд', item.company, proposed.get('company', item.company), diff_state) }}
+                        {{ advertising_revision_row('ИНН', item.inn, proposed.get('inn', item.inn), diff_state) }}
+                        {{ advertising_revision_row('Телефон', item.phone, proposed.get('phone', item.phone), diff_state) }}
+                        {{ advertising_revision_row('Telegram', item.telegram, proposed.get('telegram', item.telegram), diff_state) }}
+                        {{ advertising_revision_row('Бюджет', item.budget, proposed.get('budget', item.budget), diff_state) }}
+                        {{ advertising_revision_row('Комментарий', item.comment, proposed.get('comment', item.comment), diff_state, true) }}
+                        {% if not diff_state.has_changes %}<p class="advertising-revision-empty">Предложенная версия совпадает с текущей.</p>{% endif %}
+                    </div>
+
+                    {% if revision_status == 'pending' %}
+                    <div class="advertising-revision-decisions">
+                        <form method="post" action="{{ url_for('admin_approve_advertising_revision', request_id=item.id) }}" class="advertising-revision-approve">
+                            <p>Одобрение применит только перечисленные изменения. Сроки и служебные настройки сохранятся.</p>
+                            <button type="submit">Одобрить изменения</button>
+                        </form>
+                        <form method="post" action="{{ url_for('admin_reject_advertising_revision', request_id=item.id) }}" class="advertising-revision-reject">
+                            <label for="revision-reason-{{ item.id }}">Причина для рекламодателя<select id="revision-reason-{{ item.id }}" name="reason" required>{% for reason in moderation_reasons|default([], true) %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label>
+                            <p>Выбранная причина появится в личном кабинете владельца.</p>
+                            <button type="submit">Вернуть на исправление</button>
+                        </form>
+                    </div>
+                    {% else %}
+                    <p class="advertising-revision-rejected-note"><strong>Причина для рекламодателя:</strong> {{ ad_revision.moderation_reason|default(item.revision_reason|default('Не указана', true), true) }}<br>Рекламодатель может исправить эту версию и отправить её повторно.</p>
+                    {% endif %}
+                </section>
+            {% endif %}
+
             <form method="post" action="{{ url_for('update_advertising_request', request_id=item.id) }}" class="application-admin-form advertising-publish-form">
                 <div class="advertising-form-heading">
-                    <div><p class="eyebrow">Редактор размещения</p><h3>Настройки рекламного блока</h3></div>
-                    <p>Проверьте площадку, подготовьте текст и задайте период показа.</p>
+                    <div><p class="eyebrow">Редактор размещения</p><h3>{% if revision_status %}Текущая опубликованная версия{% else %}Настройки рекламного блока{% endif %}</h3></div>
+                    <p>{% if revision_status %}Предложение выше не подставлено в эти поля и применяется только отдельным одобрением.{% else %}Проверьте площадку, подготовьте текст и задайте период показа.{% endif %}</p>
                 </div>
 
                 <fieldset class="advertising-form-section">
@@ -71,6 +140,7 @@
                     <button type="submit" aria-label="Сохранить и применить изменения заявки № {{ item.id }}">Сохранить и применить</button>
                 </div>
             </form>
+            </div>
         </article>
     {% else %}
         <div class="empty-state"><div>📣</div><h3>Заявок пока нет</h3><p>Новые рекламные заявки появятся здесь.</p></div>
