@@ -36,7 +36,7 @@
             <div class="owner-review-topline">
                 <div class="reviewer">
                     {% if review.reviewer_avatar %}
-                    <img src="{{ url_for('static', filename='uploads/' + review.reviewer_avatar) }}" alt="">
+                    <img src="{{ url_for('uploaded_file', filename=review.reviewer_avatar) }}" alt="">
                     {% else %}
                     <span class="reviewer-avatar" aria-hidden="true">{{ review.reviewer_name[:1]|upper }}</span>
                     {% endif %}

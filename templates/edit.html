@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Редактировать объявление — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('account') }}">← В кабинет</a></div></header>
@@ -37,13 +35,12 @@
         <input type="date" name="birth_date" value="{{ animal.birth_date or '' }}">
         <fieldset class="animal-facts"><legend>Информация о питомце</legend><label><input type="checkbox" name="vaccinated" value="1" {% if animal.vaccinated %}checked{% endif %}> Есть прививки</label><label><input type="checkbox" name="vet_passport" value="1" {% if animal.vet_passport %}checked{% endif %}> Ветпаспорт</label><label><input type="checkbox" name="pedigree" value="1" {% if animal.pedigree %}checked{% endif %}> Родословная</label><label><input type="checkbox" name="sterilized" value="1" {% if animal.sterilized %}checked{% endif %}> Стерилизован/кастрирован</label><label><input type="checkbox" name="delivery" value="1" {% if animal.delivery %}checked{% endif %}> Возможна доставка</label></fieldset>
         <input type="number" name="price" value="{{ animal['price'] }}" placeholder="Цена" required>
-        <input type="text" name="city" value="{{ animal['city'] }}" list="cities" placeholder="Город" required>
+        {{ location_picker('animal-edit', animal.country_code|default('RU', true), animal.city) }}
         <textarea name="description" placeholder="Описание">{{ animal['description'] or '' }}</textarea>
         <fieldset class="contact-choice"><legend>Как с вами связаться</legend>{% set methods = (animal.contact_methods or 'phone,chat,telegram').split(',') %}<label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" {% if 'phone' in methods %}checked{% endif %}><span>По телефону</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" {% if 'chat' in methods %}checked{% endif %}><span>В сообщениях ZooLand</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram" {% if 'telegram' in methods %}checked{% endif %}><span>В Telegram</span></label><label class="pet-check"><input type="radio" name="phone_source" value="current" checked><span>Текущий номер</span></label><label class="pet-check"><input type="radio" name="phone_source" value="other"><span>Другой номер</span></label><select name="phone_country">{% for country, code in country_codes %}<option value="{{ code }}" {% if code == '+7' and country == 'Россия' %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна</option></select><input type="tel" name="phone_country_custom" placeholder="Код другой страны, +351"><input type="tel" name="contacts" value="{{ animal['contacts'] }}" placeholder="Другой номер"></fieldset>
         <label class="file-input">Заменить фото — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
         <button type="submit">{% if revision and revision.status == 'pending' %}Обновить версию на модерации{% elif revision and revision.status == 'rejected' or animal.status == 'rejected' %}Исправить и отправить на модерацию{% else %}Сохранить и отправить на модерацию{% endif %}</button>
     </form>
-    <datalist id="cities">{% for city in russian_cities|default([]) %}<option value="{{ city }}">{% endfor %}</datalist>
 </main>
 {% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>

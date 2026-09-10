@@ -5,9 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Моя реклама — ZooLand</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css', v='20260825-ad-revisions-1') }}">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body class="account-advertising-page">
 <header class="site-header">
@@ -121,7 +118,7 @@
                     </form>
                     {% else %}
                     <a class="advertising-owner-secondary" href="{{ url_for('account_advertising_edit', request_id=advertisement.id) }}">{% if ad_status == 'active' and revision_status == 'pending' %}Уточнить изменения{% elif ad_status == 'active' and revision_status == 'rejected' %}Исправить изменения{% elif ad_status == 'active' %}Предложить изменения{% else %}Редактировать{% endif %}</a>
-                    <form method="post" action="{{ url_for('account_advertising_finish', request_id=advertisement.id) }}" onsubmit="return confirm('{% if ad_status == 'active' %}Остановить показ этой рекламы?{% else %}Отозвать эту рекламную заявку?{% endif %}');">
+                    <form method="post" action="{{ url_for('account_advertising_finish', request_id=advertisement.id) }}" data-confirm="{% if ad_status == 'active' %}Остановить показ этой рекламы?{% else %}Отозвать эту рекламную заявку?{% endif %}">
                         <button class="advertising-owner-stop" type="submit">{% if ad_status == 'active' %}Остановить показ{% else %}Отозвать заявку{% endif %}</button>
                     </form>
                     {% endif %}

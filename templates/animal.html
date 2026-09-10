@@ -1,3 +1,4 @@
+{% from "_location.html" import location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ animal.type }} {{ animal.breed }} — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 {% set outcome = animal.deal_status or 'open' %}
@@ -19,10 +17,10 @@
             {% set photos = animal.photo.split(',') if animal.photo else [] %}
             {% if photos %}
             <div class="gallery">
-                <img class="gallery-main" src="{{ url_for('static', filename='uploads/' + photos[0]) }}" alt="{{ animal.type }} {{ animal.breed }}">
+                <img class="gallery-main" src="{{ url_for('uploaded_file', filename=photos[0]) }}" alt="{{ animal.type }} {{ animal.breed }}">
                 {% if photos|length > 1 %}
                 <div class="gallery-thumbs">
-                    {% for photo in photos %}<img src="{{ url_for('static', filename='uploads/' + photo) }}" alt="" class="gallery-thumb {% if loop.first %}active{% endif %}" onclick="this.parentElement.parentElement.querySelector('.gallery-main').src=this.src;this.parentElement.querySelectorAll('.gallery-thumb').forEach(t=>t.classList.remove('active'));this.classList.add('active');">{% endfor %}
+                    {% for photo in photos %}<img src="{{ url_for('uploaded_file', filename=photo) }}" alt="" class="gallery-thumb {% if loop.first %}active{% endif %}" role="button" tabindex="0">{% endfor %}
                 </div>
                 {% endif %}
             </div>
@@ -32,7 +30,7 @@
             <p class="eyebrow">{{ animal.type }} · {{ deal_type_labels.get(animal.deal_type, 'Продам') }}</p>
             <div class="detail-title-row"><h1>{{ animal.breed }}</h1><span class="listing-status-pill status-{{ outcome }}">{{ outcome_status_labels.get(outcome, 'Активно') }}</span></div>
             <p class="detail-price">{{ '{:,.0f}'.format(animal.price or 0).replace(',', ' ') }} ₽</p>
-            <p class="detail-meta">{{ animal.age }} лет <span>•</span> {{ animal.city }}</p>
+            <p class="detail-meta">{{ animal.age }} лет <span>•</span> {{ location_text(animal.country_code, animal.city) }}</p>
             <p class="detail-meta">Опубликовано {{ animal.created_at|publication_date }}</p>
             <p class="detail-meta">{% if animal.sex == 'male' %}Самец{% elif animal.sex == 'female' %}Самка{% endif %}{% if animal.birth_date %} <span>•</span> Рождён {{ animal.birth_date }}{% endif %}</p>
             <div class="animal-features">{% if animal.vaccinated %}<span>✓ Прививки</span>{% endif %}{% if animal.vet_passport %}<span>✓ Ветпаспорт</span>{% endif %}{% if animal.pedigree %}<span>✓ Родословная</span>{% endif %}{% if animal.sterilized %}<span>✓ Стерилизован/кастрирован</span>{% endif %}{% if animal.delivery %}<span>✓ Доставка</span>{% endif %}</div>
@@ -92,29 +90,10 @@
         </div>
     </article>
     {% if similar %}
-    <section class="similar-section"><div class="similar-header"><p class="eyebrow">Похожие объявления</p><h2>Ещё {{ similar|length }} рядом</h2><span class="result-count">В радиусе 50 км · {{ animal.type }}</span></div><div class="similar-cards">{% for item in similar %}<a class="similar-card" href="{{ url_for('animal_detail', animal_id=item.id) }}">{% if item.photo %}<img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">{% else %}<div class="similar-photo similar-placeholder" aria-hidden="true">🐾</div>{% endif %}<div class="similar-body"><div class="similar-topline"><span>{{ item.type }}</span><span class="similar-price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</span></div><h3>{{ item.breed }}</h3><p class="similar-meta">{{ item.age }} лет <span>•</span> {{ item.city }}</p><p class="similar-meta">Опубликовано {{ item.created_at|publication_date }}</p></div></a>{% endfor %}</div></section>
+    <section class="similar-section"><div class="similar-header"><p class="eyebrow">Похожие объявления</p><h2>Ещё {{ similar|length }} рядом</h2><span class="result-count">В радиусе 50 км · {{ animal.type }}</span></div><div class="similar-cards">{% for item in similar %}<a class="similar-card" href="{{ url_for('animal_detail', animal_id=item.id) }}">{% if item.photo %}<img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">{% else %}<div class="similar-photo similar-placeholder" aria-hidden="true">🐾</div>{% endif %}<div class="similar-body"><div class="similar-topline"><span>{{ item.type }}</span><span class="similar-price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</span></div><h3>{{ item.breed }}</h3><p class="similar-meta">{{ item.age }} лет <span>•</span> {{ location_text(item.country_code, item.city) }}</p><p class="similar-meta">Опубликовано {{ item.created_at|publication_date }}</p></div></a>{% endfor %}</div></section>
     {% endif %}
 </main>
 {% include "_footer.html" %}
-<script>
-document.querySelectorAll('.reveal-call').forEach(function(button) {
-    button.addEventListener('click', function() {
-        var phone = document.querySelector('.reveal-phone');
-        if (!phone) return;
-        var number = phone.dataset.phone;
-        phone.textContent = number;
-        phone.classList.add('revealed');
-        var link = document.createElement('a');
-        link.className = 'contact-link detail-call revealed-call';
-        link.href = 'tel:' + number.replace(/[^+\d]/g, '');
-        link.textContent = 'Позвонить';
-        link.dataset.listingMetric = 'phone_click';
-        link.dataset.listingType = 'animal';
-        link.dataset.listingId = '{{ animal.id }}';
-        button.replaceWith(link);
-    });
-});
-</script>
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

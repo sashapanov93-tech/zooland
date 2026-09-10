@@ -1,0 +1,17 @@
+{% macro location_picker(prefix, selected_country='', selected_city='', allow_empty=false) -%}
+{% set country_code = selected_country if selected_country in ('RU', 'GE') else ('' if allow_empty else 'RU') %}
+<select id="{{ prefix }}-country" name="country" data-country-select data-city-target="{{ prefix }}-city" data-selected-country="{{ country_code }}" aria-label="Страна" {% if allow_empty %}data-allow-empty{% else %}required{% endif %}>
+    {% if allow_empty %}<option value="" {% if not country_code %}selected{% endif %}>Любая страна</option>{% endif %}
+    <option value="RU" {% if country_code == 'RU' %}selected{% endif %}>Россия</option>
+    <option value="GE" {% if country_code == 'GE' %}selected{% endif %}>Грузия</option>
+</select>
+<select id="{{ prefix }}-city" name="city" data-city-select data-selected-country="{{ country_code }}" data-selected-city="{{ selected_city or '' }}" aria-label="Город" {% if allow_empty %}data-allow-empty{% else %}required{% endif %} {% if allow_empty and not country_code %}disabled{% endif %}>
+    {% if allow_empty and country_code %}<option value="">Любой город</option>{% elif allow_empty %}<option value="">Сначала выберите страну</option>{% endif %}
+    {% if selected_city %}<option value="{{ selected_city }}" selected>{{ selected_city }}</option>{% elif not allow_empty %}<option value="" selected disabled>Выберите город</option>{% endif %}
+</select>
+{%- endmacro %}
+
+{% macro location_text(country_code, city) -%}
+{% set stored_country = country_code if country_code in ('RU', 'GE') else 'RU' %}
+<span data-location-country="{{ stored_country }}" data-location-city="{{ city or '' }}">{{ city or 'Город не указан' }}, {{ 'Грузия' if stored_country == 'GE' else 'Россия' }}</span>
+{%- endmacro %}

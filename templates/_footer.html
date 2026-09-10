@@ -1,3 +1,4 @@
+{% include "_language_switcher.html" %}
 <footer class="site-footer">
     <div class="footer-inner">
         <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
@@ -13,10 +14,13 @@
         </div>
     </div>
     <nav class="footer-legal" aria-label="Информация о сайте">
-        <span>Политика конфиденциальности</span>
-        <span>Условия пользования сайтом</span>
+        <a href="{{ url_for('privacy_policy') }}">Политика конфиденциальности</a>
+        <a href="{{ url_for('terms_of_use') }}">Условия пользования сайтом</a>
         <a href="{{ url_for('advertising') }}">Реклама на сайте</a>
         <a href="{{ url_for('vacancies') }}">Вакансии</a>
+        <a href="{{ url_for('smartphone_app') }}">Приложение на смартфон</a>
     </nav>
     <div class="footer-copyright">© 2026 ZooLand</div>
 </footer>
+<script src="{{ url_for('static', filename='i18n.js') }}"></script>
+<script src="{{ url_for('static', filename='location-picker.js') }}" data-locations-url="{{ url_for('static', filename='locations.json') }}"></script>

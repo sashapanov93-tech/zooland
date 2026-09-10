@@ -3,6 +3,7 @@
     <a href="{{ url_for('messages_list') }}" class="{% if tab == 'messages' %}active{% endif %}"{% if tab == 'messages' %} aria-current="page"{% endif %}>Сообщения</a>
     <a href="{{ url_for('favorites') }}" class="{% if tab == 'favorites' %}active{% endif %}"{% if tab == 'favorites' %} aria-current="page"{% endif %}>Избранное</a>
     <a href="{{ url_for('account_advertising') }}" class="{% if tab == 'advertising' %}active{% endif %}"{% if tab == 'advertising' %} aria-current="page"{% endif %}>Моя реклама</a>
+    <a href="{{ url_for('smartphone_app') }}" class="account-tab-wide-mobile {% if tab == 'smartphone_app' %}active{% endif %}"{% if tab == 'smartphone_app' %} aria-current="page"{% endif %}>Приложение на смартфон</a>
     <a href="{{ url_for('settings') }}" class="account-tab-wide-mobile {% if tab == 'settings' %}active{% endif %}"{% if tab == 'settings' %} aria-current="page"{% endif %}>Настройки</a>
     {% if account_user and account_user.is_admin %}
     <a href="{{ url_for('admin_moderation') }}">Модерация</a>

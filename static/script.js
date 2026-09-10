@@ -57,6 +57,58 @@ const withCsrfHeader = (headers = {}) => (
   csrfToken ? { ...headers, 'X-CSRF-Token': csrfToken } : headers
 );
 
+// Поведение интерфейса живёт во внешнем скрипте: это позволяет production CSP
+// полностью запретить inline JavaScript и обработчики в HTML.
+document.querySelectorAll('form[data-confirm]').forEach((form) => {
+  form.addEventListener('submit', (event) => {
+    if (!window.confirm(form.dataset.confirm || 'Подтвердить действие?')) {
+      event.preventDefault();
+    }
+  });
+});
+
+document.querySelectorAll('[data-submit-on-change]').forEach((field) => {
+  field.addEventListener('change', () => field.form?.requestSubmit());
+});
+
+const activateGalleryThumb = (thumb) => {
+  const gallery = thumb.closest('.gallery');
+  const mainImage = gallery?.querySelector('.gallery-main');
+  if (!mainImage) return;
+  mainImage.src = thumb.src;
+  gallery.querySelectorAll('.gallery-thumb').forEach((item) => item.classList.remove('active'));
+  thumb.classList.add('active');
+};
+document.querySelectorAll('.gallery-thumb').forEach((thumb) => {
+  thumb.addEventListener('click', () => activateGalleryThumb(thumb));
+  thumb.addEventListener('keydown', (event) => {
+    if (event.key !== 'Enter' && event.key !== ' ') return;
+    event.preventDefault();
+    activateGalleryThumb(thumb);
+  });
+});
+
+document.querySelectorAll('.reveal-call').forEach((button) => {
+  button.addEventListener('click', () => {
+    const phone = button.closest('.owner-card')?.querySelector('.reveal-phone');
+    const number = phone?.dataset.phone;
+    if (!phone || !number) return;
+    phone.textContent = number;
+    phone.classList.add('revealed');
+    const link = document.createElement('a');
+    link.className = 'contact-link detail-call revealed-call';
+    link.href = `tel:${number.replace(/[^+\d]/g, '')}`;
+    link.textContent = 'Позвонить';
+    for (const key of ['listingMetric', 'listingType', 'listingId']) {
+      if (button.dataset[key]) link.dataset[key] = button.dataset[key];
+    }
+    button.replaceWith(link);
+  });
+});
+
+const threadMessages = document.querySelector('.thread-messages');
+if (threadMessages) threadMessages.scrollTop = threadMessages.scrollHeight;
+
 // Контактная статистика остаётся честной и приватной: сервер получает только
 // тип карточки и действие, без номера телефона, текста, IP или профиля гостя.
 // Переход не ждёт аналитику — звонок/Telegram/чат остаются рабочими даже при

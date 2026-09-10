@@ -1,3 +1,4 @@
+{% from "_location.html" import location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -8,14 +9,14 @@
 <body>
 <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_reports') }}">Жалобы</a><a class="back-link" href="{{ url_for('settings') }}">← В настройки</a></div></div></header>
 <main class="account-page">
-    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Пользователи · {{ users|length }}</h1><p>Здесь нет email, телефонов и паролей.</p></section>
-    <section class="account-section"><div class="settings-card" style="overflow-x:auto">
+    <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Пользователи · {{ users|length }}</h1><p>Email и IP-адрес последней авторизации доступны только администратору. Пароли не отображаются.</p></section>
+    <section class="account-section"><div class="settings-card admin-table-scroll">
         <table class="admin-users-table">
-            <thead><tr><th>ID</th><th>Имя</th><th>Email</th><th>Город</th><th>О себе</th><th>Telegram</th><th>Объявления</th><th>Регистрация</th><th>Действия</th></tr></thead>
+            <thead><tr><th>ID</th><th>Имя</th><th>Email</th><th>Страна и город</th><th>О себе</th><th>Telegram</th><th>Объявления</th><th>Регистрация</th><th>IP последней авторизации</th><th>Действия</th></tr></thead>
             <tbody>{% for user in users %}<tr>
-                <td>#{{ user.id }}</td><td>{{ user.name }}</td><td>{{ user.email }}</td><td>{{ user.city or '—' }}</td><td>{{ user.about or '—' }}</td><td>{% if user.telegram %}<a href="https://t.me/{{ user.telegram }}" target="_blank" rel="noopener">@{{ user.telegram }}</a>{% else %}—{% endif %}</td>
-                <td>{{ user.animals_count + user.services_count + user.food_count }}</td><td>{{ (user.created_at or '—')[:10] }}</td><td><a href="{{ url_for('admin_user_listings', user_id=user.id) }}">Все объявления</a><form method="post" action="{{ url_for('admin_send_password_reset', user_id=user.id) }}" onsubmit="return confirm('Отправить пользователю ссылку для восстановления пароля?');"><button type="submit">Сбросить пароль</button></form>{% if user.id != account_user.id %}<form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" onsubmit="return confirm('Удалить пользователя и все его объявления безвозвратно?');"><button class="danger" type="submit">Удалить</button></form>{% endif %}</td>
-            </tr>{% else %}<tr><td colspan="9">Пользователей пока нет.</td></tr>{% endfor %}</tbody>
+                <td>#{{ user.id }}</td><td>{{ user.name }}</td><td>{{ user.email }}</td><td>{{ location_text(user.country_code, user.city) }}</td><td>{{ user.about or '—' }}</td><td>{% if user.telegram %}<a href="https://t.me/{{ user.telegram }}" target="_blank" rel="noopener">@{{ user.telegram }}</a>{% else %}—{% endif %}</td>
+                <td>{{ user.animals_count + user.services_count + user.food_count }}</td><td>{{ (user.created_at or '—')[:10] }}</td><td class="admin-user-auth">{% if user.last_auth_ip %}<code>{{ user.last_auth_ip }}</code>{% if user.last_auth_at %}<time datetime="{{ user.last_auth_at }}">{{ user.last_auth_at[:16].replace('T', ' ') }} UTC</time>{% endif %}{% else %}—{% endif %}</td><td><a href="{{ url_for('admin_user_listings', user_id=user.id) }}">Все объявления</a><form method="post" action="{{ url_for('admin_send_password_reset', user_id=user.id) }}" data-confirm="Отправить пользователю ссылку для восстановления пароля?"><button type="submit">Сбросить пароль</button></form>{% if user.id != account_user.id %}<form method="post" action="{{ url_for('admin_delete_user', user_id=user.id) }}" data-confirm="Удалить пользователя и все его объявления безвозвратно?"><button class="danger" type="submit">Удалить</button></form>{% endif %}</td>
+            </tr>{% else %}<tr><td colspan="10">Пользователей пока нет.</td></tr>{% endfor %}</tbody>
         </table>
     </div></section>
 </main>

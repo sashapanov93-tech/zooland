@@ -1,5 +1,6 @@
 import json
 import hmac
+import ipaddress
 import math
 import os
 import re
@@ -8,13 +9,15 @@ import sqlite3
 import time
 import smtplib
 import ssl
+import unicodedata
+import click
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from hashlib import sha256
 from functools import wraps
 from urllib.parse import urljoin, urlparse
 
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -48,20 +51,46 @@ def env_flag(name, default=False):
     return os.environ.get(name, "1" if default else "0").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def env_int(name, default, *, minimum=None, maximum=None):
+    raw_value = os.environ.get(name, str(default)).strip()
+    try:
+        value = int(raw_value)
+    except ValueError as error:
+        raise RuntimeError(f"{name} должен быть целым числом.") from error
+    if ((minimum is not None and value < minimum) or
+            (maximum is not None and value > maximum)):
+        raise RuntimeError(f"{name} должен быть от {minimum} до {maximum}.")
+    return value
+
+
 ENVIRONMENT = os.environ.get("ZOOLAND_ENV", "development").strip().lower()
 IS_PRODUCTION = ENVIRONMENT == "production"
-PORT = int(os.environ.get("ZOOLAND_PORT", "5000"))
+PORT = env_int("ZOOLAND_PORT", 5000, minimum=1, maximum=65535)
 PUBLIC_BASE_URL = os.environ.get("ZOOLAND_PUBLIC_BASE_URL", f"http://127.0.0.1:{PORT}").rstrip("/")
-public_url_parts = urlparse(PUBLIC_BASE_URL)
-if public_url_parts.scheme not in {"http", "https"} or not public_url_parts.netloc:
+try:
+    public_url_parts = urlparse(PUBLIC_BASE_URL)
+    public_url_port = public_url_parts.port
+except ValueError as error:
+    raise RuntimeError("ZOOLAND_PUBLIC_BASE_URL содержит некорректный адрес.") from error
+if (public_url_parts.scheme not in {"http", "https"} or not public_url_parts.hostname or
+        public_url_parts.username is not None or public_url_parts.password is not None or
+        public_url_parts.query or public_url_parts.fragment or
+        (public_url_port is not None and not 1 <= public_url_port <= 65535)):
     raise RuntimeError("ZOOLAND_PUBLIC_BASE_URL должен содержать полный адрес сайта.")
 if IS_PRODUCTION and public_url_parts.scheme != "https":
     raise RuntimeError("В production ZOOLAND_PUBLIC_BASE_URL должен использовать HTTPS.")
 
 secret_key = os.environ.get("ZOOLAND_SECRET_KEY", "")
-if len(secret_key) < 32:
+insecure_secret_keys = {
+    "generate_a_unique_96_character_hex_secret", "change_me", "changeme", "replace_me",
+}
+secret_is_insecure = len(secret_key) < 32 or secret_key.strip().casefold() in insecure_secret_keys
+if secret_is_insecure:
     if IS_PRODUCTION:
-        raise RuntimeError("Для production задайте длинный ZOOLAND_SECRET_KEY вне репозитория.")
+        raise RuntimeError(
+            "Для production задайте уникальный ZOOLAND_SECRET_KEY вне репозитория "
+            "(например, результат `openssl rand -hex 48`)."
+        )
     # В разработке секрет остаётся непредсказуемым даже без .env, но сессии сбросятся после перезапуска.
     secret_key = secrets.token_urlsafe(48)
 
@@ -71,9 +100,15 @@ if IS_PRODUCTION and not trusted_hosts:
     trusted_hosts = [public_url_parts.netloc]
 
 app = Flask(__name__)
+configured_upload_path = os.environ.get("ZOOLAND_UPLOAD_FOLDER", "").strip()
+UPLOAD_FOLDER = (
+    configured_upload_path
+    if os.path.isabs(configured_upload_path)
+    else os.path.join(PROJECT_ROOT, configured_upload_path or "static/uploads")
+)
 app.config.update(
     SECRET_KEY=secret_key,
-    UPLOAD_FOLDER=os.path.join(PROJECT_ROOT, "static", "uploads"),
+    UPLOAD_FOLDER=UPLOAD_FOLDER,
     MAX_CONTENT_LENGTH=50 * 1024 * 1024,  # До 10 файлов по 5 МБ.
     MAX_FORM_MEMORY_SIZE=2 * 1024 * 1024,
     MAX_FORM_PARTS=50,
@@ -88,22 +123,109 @@ app.config.update(
     TRUSTED_HOSTS=trusted_hosts or None,
 )
 
-trusted_proxy_hops = int(os.environ.get("ZOOLAND_TRUST_PROXY_HOPS", "0"))
+trusted_proxy_hops = env_int("ZOOLAND_TRUST_PROXY_HOPS", 0, minimum=0, maximum=2)
 if trusted_proxy_hops:
-    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=trusted_proxy_hops, x_proto=trusted_proxy_hops, x_host=trusted_proxy_hops)
+    # Host берём из явно переданного Nginx Host и проверяем TRUSTED_HOSTS;
+    # клиентскому X-Forwarded-Host не доверяем.
+    app.wsgi_app = ProxyFix(
+        app.wsgi_app,
+        x_for=trusted_proxy_hops,
+        x_proto=trusted_proxy_hops,
+    )
 
 configured_db_path = os.environ.get("ZOOLAND_DB_PATH", "").strip()
 DB_NAME = (configured_db_path if os.path.isabs(configured_db_path)
            else os.path.join(PROJECT_ROOT, configured_db_path or "zooland.db"))
+if IS_PRODUCTION:
+    if not configured_db_path or not os.path.isabs(configured_db_path):
+        raise RuntimeError("Для production задайте абсолютный ZOOLAND_DB_PATH вне checkout.")
+    if not configured_upload_path or not os.path.isabs(configured_upload_path):
+        raise RuntimeError("Для production задайте абсолютный ZOOLAND_UPLOAD_FOLDER вне checkout.")
+    project_real_path = os.path.realpath(PROJECT_ROOT)
+    if os.path.commonpath((project_real_path, os.path.realpath(DB_NAME))) == project_real_path:
+        raise RuntimeError("ZOOLAND_DB_PATH в production должен находиться вне checkout.")
+    if os.path.commonpath((project_real_path, os.path.realpath(UPLOAD_FOLDER))) == project_real_path:
+        raise RuntimeError("ZOOLAND_UPLOAD_FOLDER в production должен находиться вне checkout.")
 MAX_PHOTOS = 10          # Не более 10 фото на объявление.
 MAX_PHOTO_SIZE = 5 * 1024 * 1024  # Не более 5 МБ на файл.
+MAX_LISTING_PRICE = 100_000_000
+MAX_LISTING_TITLE_LENGTH = 120
+MAX_LISTING_CITY_LENGTH = 100
+MAX_LISTING_DESCRIPTION_LENGTH = 5_000
+MAX_PROFILE_NAME_LENGTH = 80
+MAX_PROFILE_ABOUT_LENGTH = 1_000
+MAX_EMAIL_LENGTH = 254
+MAX_PASSWORD_LENGTH = 128
+MAX_SAVED_SEARCHES = 20
+MAX_SAVED_SEARCH_NAME_LENGTH = 80
+MAX_SAVED_SEARCH_QUERY_LENGTH = 120
+SAVED_SEARCH_TEXT_LIMITS = {
+    "q": MAX_SAVED_SEARCH_QUERY_LENGTH,
+    "country": 2,
+    "city": MAX_LISTING_CITY_LENGTH,
+    "type": 80,
+    "breed": 120,
+}
+SAVED_SEARCH_FILTER_KEYS = (
+    "q", "country", "city", "type", "kind", "price_min", "price_max", "age_min", "age_max",
+    "sex", "breed", "deal", "only_photo", "vaccinated", "delivery",
+)
 CLAMAV_HOST = os.environ.get("ZOOLAND_CLAMAV_HOST", "").strip() or None
-CLAMAV_PORT = int(os.environ.get("ZOOLAND_CLAMAV_PORT", "3310"))
+CLAMAV_PORT = env_int("ZOOLAND_CLAMAV_PORT", 3310, minimum=1, maximum=65535)
 # В production отсутствие сканера намеренно останавливает загрузку, а не
 # превращает антивирус в необязательную галочку.
 REQUIRE_ANTIVIRUS = env_flag("ZOOLAND_REQUIRE_ANTIVIRUS", IS_PRODUCTION)
 FREE_DAYS = 7
-SUPPORT_EMAIL = os.environ.get("ZOOLAND_SUPPORT_EMAIL", "support@zooland.ru")
+CONFIG_EMAIL_RE = re.compile(
+    r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+"
+)
+
+
+def config_email_is_valid(value):
+    return bool(value and len(value) <= 254 and CONFIG_EMAIL_RE.fullmatch(value))
+
+
+SUPPORT_EMAIL = os.environ.get("ZOOLAND_SUPPORT_EMAIL", "").strip() or (
+    "support@zooland.ru" if not IS_PRODUCTION else ""
+)
+SMTP_HOST = os.environ.get("ZOOLAND_SMTP_HOST", "").strip()
+SMTP_FROM = os.environ.get("ZOOLAND_SMTP_FROM", "").strip()
+SMTP_USERNAME = os.environ.get("ZOOLAND_SMTP_USERNAME", "").strip()
+SMTP_PASSWORD = os.environ.get("ZOOLAND_SMTP_PASSWORD", "")
+SMTP_PORT = env_int("ZOOLAND_SMTP_PORT", 587, minimum=1, maximum=65535)
+SMTP_TLS = env_flag("ZOOLAND_SMTP_TLS", True)
+TERMS_VERSION = "2026-09-02"
+PRIVACY_VERSION = "2026-09-10"
+AUTH_IP_RETENTION_DAYS = 30
+OPERATOR_NAME = os.environ.get("ZOOLAND_OPERATOR_NAME", "").strip()
+OPERATOR_ADDRESS = os.environ.get("ZOOLAND_OPERATOR_ADDRESS", "").strip()
+PRIVACY_EMAIL = os.environ.get("ZOOLAND_PRIVACY_EMAIL", SUPPORT_EMAIL).strip() or SUPPORT_EMAIL
+if IS_PRODUCTION and (not OPERATOR_NAME or not OPERATOR_ADDRESS):
+    raise RuntimeError(
+        "Для production задайте ZOOLAND_OPERATOR_NAME и ZOOLAND_OPERATOR_ADDRESS "
+        "для юридических документов сайта."
+    )
+if IS_PRODUCTION and (
+        not SMTP_HOST or not config_email_is_valid(SMTP_FROM) or not SMTP_TLS or
+        SMTP_FROM.casefold().endswith("@example.com") or
+        SMTP_USERNAME.casefold().endswith("@example.com") or
+        (SMTP_USERNAME and not SMTP_PASSWORD) or
+        SMTP_PASSWORD.casefold() in {"your_gmail_app_password", "change_me", "changeme"}):
+    raise RuntimeError(
+        "Для production задайте рабочие ZOOLAND_SMTP_HOST/PORT/FROM и, "
+        "если нужна авторизация, ZOOLAND_SMTP_USERNAME/PASSWORD; STARTTLS обязателен."
+    )
+if IS_PRODUCTION and (
+        not config_email_is_valid(SUPPORT_EMAIL) or
+        not config_email_is_valid(PRIVACY_EMAIL) or
+        SUPPORT_EMAIL.casefold().endswith("@example.com") or
+        PRIVACY_EMAIL.casefold().endswith("@example.com")):
+    raise RuntimeError(
+        "Для production задайте реальные ZOOLAND_SUPPORT_EMAIL и "
+        "ZOOLAND_PRIVACY_EMAIL не на домене example.com."
+    )
+DISPLAY_OPERATOR_NAME = OPERATOR_NAME or "Владелец сервиса ZooLand"
+DISPLAY_OPERATOR_ADDRESS = OPERATOR_ADDRESS or "будет указан владельцем до публичного запуска"
 DEAL_TYPE_LABELS = {"sale": "Продам", "buy": "Куплю", "mating": "Вязка", "friend": "Ищу друга/подругу"}
 OUTCOME_STATUS_LABELS = {
     "open": "Активно",
@@ -128,13 +250,13 @@ LISTING_TABLES = {
 }
 LISTING_REVISION_FIELDS = {
     "animal": (
-        "type", "breed", "age", "price", "city", "description", "contacts", "photo", "deal_type",
+        "type", "breed", "age", "price", "country_code", "city", "description", "contacts", "photo", "deal_type",
         "contact_methods", "sex", "birth_date", "vaccinated", "vet_passport", "pedigree", "sterilized", "delivery",
     ),
     # Контакты услуг и товаров — снимок на момент публикации. Иначе смена
     # номера или Telegram в профиле обходила бы повторную модерацию карточки.
-    "service": ("type", "title", "pet_types", "city", "price", "description", "photo", "contacts", "telegram", "contact_methods"),
-    "food": ("category", "title", "city", "price", "description", "photo", "contacts", "telegram", "contact_methods"),
+    "service": ("type", "title", "pet_types", "country_code", "city", "price", "description", "photo", "contacts", "telegram", "contact_methods"),
+    "food": ("category", "title", "country_code", "city", "price", "description", "photo", "contacts", "telegram", "contact_methods"),
 }
 TRACKED_METRICS = frozenset({"favorite_added", "phone_click", "telegram_click", "chat_click"})
 REPORT_REASONS = ("Мошенничество", "Запрещённый товар или услуга", "Неверная информация", "Оскорбительный контент", "Дубликат", "Другое")
@@ -213,9 +335,7 @@ VACANCIES = {
         "requirements": ("Грамотность и хороший стиль", "Умение проверять факты и источники", "Интерес к теме животных"),
     },
 }
-COUNTRY_CODES = [("Россия", "+7"), ("Казахстан", "+7"), ("США и Канада", "+1"), ("Украина", "+380"), ("Беларусь", "+375"), ("Германия", "+49"), ("Франция", "+33"), ("Великобритания", "+44"), ("Испания", "+34"), ("Италия", "+39"), ("Турция", "+90"), ("ОАЭ", "+971"), ("Израиль", "+972"), ("Китай", "+86"), ("Япония", "+81"), ("Индия", "+91"), ("Южная Корея", "+82"), ("Австралия", "+61"), ("Бразилия", "+55"), ("Мексика", "+52"), ("ЮАР", "+27")]
-os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
-
+COUNTRY_CODES = [("Россия", "+7"), ("Грузия", "+995"), ("Казахстан", "+7"), ("США и Канада", "+1"), ("Украина", "+380"), ("Беларусь", "+375"), ("Германия", "+49"), ("Франция", "+33"), ("Великобритания", "+44"), ("Испания", "+34"), ("Италия", "+39"), ("Турция", "+90"), ("ОАЭ", "+971"), ("Израиль", "+972"), ("Китай", "+86"), ("Япония", "+81"), ("Индия", "+91"), ("Южная Корея", "+82"), ("Австралия", "+61"), ("Бразилия", "+55"), ("Мексика", "+52"), ("ЮАР", "+27")]
 # ---------- Защита от DDoS-атак ----------
 # Скользящее окно: не более RATE_LIMIT запросов с одного IP за RATE_WINDOW секунд.
 # При превышении IP временно блокируется на BAN_SECONDS.
@@ -228,11 +348,23 @@ _request_log = {}   # ip -> список timestamp запросов
 _ban_count = {}     # ip -> сколько раз превышен лимит
 _banned_until = {}  # ip -> timestamp окончания бана
 _next_rate_cleanup = 0.0
+_next_housekeeping_at = 0.0
 
 
 def _client_ip():
     """ProxyFix подставит проверенный IP только при явно доверенном прокси."""
     return request.remote_addr or "unknown"
+
+
+def _client_ip_for_storage():
+    """Возвращает канонический IPv4/IPv6 для аудита входа или None."""
+    raw_ip = _client_ip().strip()
+    if not raw_ip or len(raw_ip) > 45 or "%" in raw_ip:
+        return None
+    try:
+        return ipaddress.ip_address(raw_ip).compressed
+    except ValueError:
+        return None
 
 
 def _cleanup_rate_state(now):
@@ -260,7 +392,7 @@ def rate_limit():
     _cleanup_rate_state(now)
     ip = _client_ip()
     # Статические файлы не считаем — браузер запрашивает их пачками.
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/static/") or request.path == "/healthz":
         return None
     # Авторизованному модератору лимит не мешает проверять объявления и
     # обращения. Роль сверяется с БД, а не с параметрами запроса или формой.
@@ -286,6 +418,13 @@ def rate_limit():
     return None
 
 
+@app.before_request
+def block_legacy_static_upload_path():
+    """Загрузки раздаются только через /uploads из отдельного data-каталога."""
+    if request.path.startswith("/static/uploads/"):
+        abort(404)
+
+
 UNSAFE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 
@@ -300,7 +439,10 @@ def csrf_token():
 def request_origin_is_trusted(value):
     if not value:
         return False
-    parsed = urlparse(value)
+    try:
+        parsed = urlparse(value)
+    except (TypeError, ValueError):
+        return False
     expected_scheme = "https" if IS_PRODUCTION else request.scheme
     return bool(parsed.scheme == expected_scheme and parsed.netloc and
                 hmac.compare_digest(parsed.netloc.casefold(), request.host.casefold()))
@@ -309,7 +451,7 @@ def request_origin_is_trusted(value):
 @app.before_request
 def csrf_protect():
     """Токен защищает формы, а Origin/Referer оставляет безопасный fallback без JavaScript."""
-    if request.path.startswith("/static/"):
+    if request.path.startswith("/static/") or request.path == "/healthz":
         return None
     csrf_token()
     if request.method not in UNSAFE_METHODS:
@@ -326,7 +468,7 @@ def csrf_protect():
 @app.after_request
 def apply_security_headers(response):
     """Общие браузерные ограничения и доступный JavaScript CSRF-cookie."""
-    if not request.path.startswith("/static/"):
+    if not request.path.startswith("/static/") and request.path != "/healthz":
         response.set_cookie(
             "zooland_csrf", csrf_token(), max_age=int(app.permanent_session_lifetime.total_seconds()),
             secure=app.config["SESSION_COOKIE_SECURE"], httponly=False, samesite="Lax", path="/",
@@ -334,15 +476,22 @@ def apply_security_headers(response):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("Cross-Origin-Resource-Policy", "same-origin")
     response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
     response.headers.setdefault(
         "Content-Security-Policy",
         "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; "
-        "img-src 'self' data:; connect-src 'self'; script-src 'self' 'unsafe-inline'; "
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com",
+        "img-src 'self' data:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'",
     )
-    if request.path.startswith(("/account", "/password", "/verify-email", "/settings", "/admin")):
+    private_prefixes = (
+        "/account", "/password", "/verify-email", "/settings", "/admin",
+        "/messages", "/notifications", "/favorites", "/edit/", "/support",
+    )
+    if session.get("user_id") or request.path.startswith(private_prefixes):
         response.headers.setdefault("Cache-Control", "no-store")
+    if request.path == "/healthz":
+        response.headers["Cache-Control"] = "no-store"
     if IS_PRODUCTION:
         response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     return response
@@ -352,12 +501,53 @@ def apply_security_headers(response):
 def too_large(_error):
     return "Файл слишком большой. Максимальный размер одного файла — 5 МБ, всего до 10 файлов.", 413
 
-with open(os.path.join(PROJECT_ROOT, "static", "russian-cities.json"), encoding="utf-8") as cities_file:
-    cities_data = json.load(cities_file)
-RUSSIAN_CITIES = sorted({item["name"] for item in cities_data})
-CITY_COORDS = {item["name"]: (float(item["coords"]["lat"]), float(item["coords"]["lon"])) for item in cities_data}
+with open(os.path.join(PROJECT_ROOT, "static", "locations.json"), encoding="utf-8") as locations_file:
+    LOCATIONS_DATA = json.load(locations_file)
+
+LOCATION_COUNTRIES = LOCATIONS_DATA.get("countries", {})
+SUPPORTED_COUNTRY_CODES = tuple(LOCATION_COUNTRIES)
+if set(SUPPORTED_COUNTRY_CODES) != {"RU", "GE"}:
+    raise RuntimeError("Справочник locations.json должен содержать страны RU и GE.")
+
+CITIES_BY_COUNTRY = {
+    country_code: tuple(city["names"]["ru"] for city in country["cities"])
+    for country_code, country in LOCATION_COUNTRIES.items()
+}
+CITY_SETS_BY_COUNTRY = {
+    country_code: frozenset(cities)
+    for country_code, cities in CITIES_BY_COUNTRY.items()
+}
+RUSSIAN_CITIES = sorted(CITY_SETS_BY_COUNTRY["RU"])
+CITY_COORDS = {
+    (country_code, city["names"]["ru"]): (float(city["lat"]), float(city["lon"]))
+    for country_code, country in LOCATION_COUNTRIES.items()
+    for city in country["cities"]
+}
+LOCATION_COUNTRY_OPTIONS = tuple(
+    (country_code, country["names"]["ru"])
+    for country_code, country in LOCATION_COUNTRIES.items()
+)
 SIMILAR_RADIUS_KM = 50
 SIMILAR_LIMIT = 6
+
+
+def normalize_country_code(value, default=""):
+    """Возвращает поддерживаемый ISO-код страны либо пустую строку."""
+    country_code = (value or default or "").strip().upper()
+    return country_code if country_code in CITY_SETS_BY_COUNTRY else ""
+
+
+def normalize_listing_location(data, *, city_optional=False, default_country="RU"):
+    """Проверяет зависимую пару страна/город из формы без доверия к JavaScript."""
+    submitted_country = (data.get("country") or default_country or "").strip().upper()
+    city = (data.get("city") or "").strip()
+    if submitted_country not in CITY_SETS_BY_COUNTRY:
+        return "", city, "Выберите корректную страну."
+    if not city:
+        return submitted_country, "", None if city_optional else "Выберите город."
+    if len(city) > MAX_LISTING_CITY_LENGTH or city not in CITY_SETS_BY_COUNTRY[submitted_country]:
+        return submitted_country, city, "Выберите город из списка выбранной страны."
+    return submitted_country, city, None
 
 # Раскладки используются именно для поискового запроса: «rjn» -> «кот».
 EN_KEYS = "qwertyuiop[]asdfghjkl;'zxcvbnm,./`"
@@ -400,26 +590,29 @@ def close_db(_error):
 
 
 def init_db():
+    os.makedirs(os.path.dirname(DB_NAME) or PROJECT_ROOT, mode=0o700, exist_ok=True)
+    os.makedirs(app.config["UPLOAD_FOLDER"], mode=0o700, exist_ok=True)
     connection = sqlite3.connect(DB_NAME)
     cursor = connection.cursor()
     cursor.execute("""CREATE TABLE IF NOT EXISTS animals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, breed TEXT, age INTEGER,
-        price INTEGER, city TEXT, description TEXT, contacts TEXT, photo TEXT
+        price INTEGER, country_code TEXT NOT NULL DEFAULT 'RU', city TEXT, description TEXT, contacts TEXT, photo TEXT
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE,
-        password_hash TEXT NOT NULL, created_at TEXT NOT NULL
+        password_hash TEXT NOT NULL, created_at TEXT NOT NULL,
+        last_auth_ip TEXT, last_auth_at TEXT
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS services (
         id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT NOT NULL, title TEXT NOT NULL,
-        pet_types TEXT, city TEXT, price INTEGER DEFAULT 0, description TEXT,
+        pet_types TEXT, country_code TEXT NOT NULL DEFAULT 'RU', city TEXT, price INTEGER DEFAULT 0, description TEXT,
         photo TEXT, contacts TEXT, telegram TEXT, user_id INTEGER, status TEXT DEFAULT 'active',
         created_at TEXT, expires_at TEXT, months_published INTEGER DEFAULT 0,
         views_total INTEGER DEFAULT 0, views_data TEXT
     )""")
     cursor.execute("""CREATE TABLE IF NOT EXISTS food (
         id INTEGER PRIMARY KEY AUTOINCREMENT, category TEXT NOT NULL, title TEXT NOT NULL,
-        city TEXT, price INTEGER DEFAULT 0, description TEXT, photo TEXT,
+        country_code TEXT NOT NULL DEFAULT 'RU', city TEXT, price INTEGER DEFAULT 0, description TEXT, photo TEXT,
         contacts TEXT, telegram TEXT, user_id INTEGER, status TEXT DEFAULT 'active', created_at TEXT,
         expires_at TEXT, views_total INTEGER DEFAULT 0, views_data TEXT
     )""")
@@ -514,6 +707,29 @@ def init_db():
         saved_search_id INTEGER NOT NULL, listing_type TEXT NOT NULL, listing_id INTEGER NOT NULL,
         sent_at TEXT NOT NULL, PRIMARY KEY(saved_search_id, listing_type, listing_id)
     )""")
+    cursor.execute("""CREATE TABLE IF NOT EXISTS saved_search_jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        listing_type TEXT NOT NULL CHECK (listing_type IN ('animal', 'service', 'food')),
+        listing_id INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        processed_at TEXT,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TEXT,
+        UNIQUE(listing_type, listing_id)
+    )""")
+    saved_search_job_columns = {
+        row[1] for row in cursor.execute("PRAGMA table_info(saved_search_jobs)")
+    }
+    for column, definition in {
+        "attempts": "INTEGER NOT NULL DEFAULT 0",
+        "last_attempt_at": "TEXT",
+    }.items():
+        if column not in saved_search_job_columns:
+            cursor.execute(f"ALTER TABLE saved_search_jobs ADD COLUMN {column} {definition}")
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_saved_search_jobs_pending "
+        "ON saved_search_jobs(processed_at, id)"
+    )
     cursor.execute("""CREATE TABLE IF NOT EXISTS rate_limit_events (
         bucket TEXT NOT NULL, subject_hash TEXT NOT NULL, created_at REAL NOT NULL
     )""")
@@ -614,19 +830,40 @@ def init_db():
     user_columns = {row[1] for row in cursor.execute("PRAGMA table_info(users)")}
     for column, definition in {
         "phone": "TEXT", "email_verified": "INTEGER DEFAULT 0",
-        "city": "TEXT", "gender": "TEXT", "birth_date": "TEXT", "about": "TEXT", "avatar": "TEXT", "telegram": "TEXT",
+        "country_code": "TEXT NOT NULL DEFAULT 'RU'", "city": "TEXT", "gender": "TEXT", "birth_date": "TEXT", "about": "TEXT", "avatar": "TEXT", "telegram": "TEXT",
         "is_admin": "INTEGER NOT NULL DEFAULT 0", "session_version": "INTEGER NOT NULL DEFAULT 1",
         "pending_email": "TEXT",
+        "terms_accepted_at": "TEXT", "terms_version": "TEXT",
+        "privacy_accepted_at": "TEXT", "privacy_version": "TEXT",
+        "last_auth_ip": "TEXT", "last_auth_at": "TEXT",
     }.items():
         if column not in user_columns:
             cursor.execute(f"ALTER TABLE users ADD COLUMN {column} {definition}")
     # Уже существующие аккаунты не блокируем после обновления схемы.
     cursor.execute("UPDATE users SET email_verified=1 WHERE email_verified IS NULL")
     cursor.execute("UPDATE users SET session_version=1 WHERE session_version IS NULL")
+    duplicate_phone = cursor.execute(
+        """SELECT phone
+             FROM users
+            WHERE phone IS NOT NULL AND TRIM(phone)!=''
+            GROUP BY phone
+           HAVING COUNT(*) > 1
+            LIMIT 1"""
+    ).fetchone()
+    if duplicate_phone:
+        raise RuntimeError(
+            "Миграция остановлена: в users есть повторяющийся номер телефона. "
+            "Разрешите дубли вручную до запуска."
+        )
+    cursor.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique "
+        "ON users(phone) WHERE phone IS NOT NULL AND phone!=''"
+    )
     columns = {row[1] for row in cursor.execute("PRAGMA table_info(animals)")}
     animal_expires_at_added = "expires_at" not in columns
     migrations = {
         "user_id": "INTEGER", "guest_token": "TEXT", "status": "TEXT DEFAULT 'active'",
+        "country_code": "TEXT NOT NULL DEFAULT 'RU'",
         "created_at": "TEXT", "expires_at": "TEXT", "archived_at": "TEXT",
         "views_total": "INTEGER DEFAULT 0", "views_data": "TEXT", "deal_type": "TEXT DEFAULT 'sale'",
         "contact_methods": "TEXT DEFAULT 'phone,chat,telegram'",
@@ -649,6 +886,8 @@ def init_db():
             telegram_added = True
         if "contact_methods" not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN contact_methods TEXT DEFAULT 'phone,chat,telegram'")
+        if "country_code" not in columns:
+            cursor.execute(f"ALTER TABLE {table} ADD COLUMN country_code TEXT NOT NULL DEFAULT 'RU'")
         if "moderation_reason" not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN moderation_reason TEXT")
         # Для уже опубликованных карточек фиксируем текущие контакты ровно
@@ -675,6 +914,11 @@ def init_db():
         if "outcome_at" not in columns:
             cursor.execute(f"ALTER TABLE {table} ADD COLUMN outcome_at TEXT")
         cursor.execute(f"UPDATE {table} SET deal_status='open' WHERE deal_status IS NULL OR deal_status=''")
+        cursor.execute(f"UPDATE {table} SET country_code='RU' WHERE country_code IS NULL OR TRIM(country_code)='' ")
+    cursor.execute("UPDATE users SET country_code='RU' WHERE country_code IS NULL OR TRIM(country_code)='' ")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_animals_location ON animals(country_code, city)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_services_location ON services(country_code, city)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_food_location ON food(country_code, city)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_favorites_listing ON favorites(listing_type, listing_id)")
     cursor.execute("""INSERT OR IGNORE INTO dialog_states (user_id, listing_type, listing_id, other_id, folder, updated_at)
                       SELECT sender_id, listing_type, listing_id, receiver_id, COALESCE(folder, 'inbox'), ? FROM messages""", (utcnow(),))
@@ -741,6 +985,12 @@ def valid_advertising_target(value):
     if parts.username is not None or parts.password is not None or port is not None and not 1 <= port <= 65535:
         return None
     return target
+
+
+def valid_external_http_url(value):
+    """Разрешает только полноценный внешний http(s) URL без userinfo."""
+    target = valid_advertising_target(value)
+    return target if target and not target.startswith("/") else None
 
 
 def advertising_date_is_valid(value):
@@ -1091,6 +1341,7 @@ ACTION_RATE_LIMITS = {
     "review": (10, 60 * 60),
     "publish": (8, 60 * 60),
     "upload": (20, 60 * 60),
+    "saved_search": (10, 60 * 60),
     "metric": (30, 60),
     "admin_2fa": (5, 15 * 60),
 }
@@ -1106,7 +1357,13 @@ def allow_sensitive_action(action, subject=""):
     connection = db()
     # Держим только окно самого длинного лимита плюс небольшой запас.
     connection.execute("DELETE FROM rate_limit_events WHERE created_at<?", (now - 2 * 60 * 60,))
-    hashed_keys = [(bucket, sha256(value.encode("utf-8")).hexdigest()) for bucket, value in keys]
+    # В БД не оставляем обычный SHA-256 от предсказуемого IP/email: HMAC с
+    # секретом приложения не позволяет проверить догадку после утечки файла.
+    rate_key = app.secret_key.encode("utf-8")
+    hashed_keys = [
+        (bucket, hmac.new(rate_key, value.encode("utf-8"), sha256).hexdigest())
+        for bucket, value in keys
+    ]
     for bucket, subject_hash in hashed_keys:
         count = connection.execute("SELECT COUNT(*) FROM rate_limit_events WHERE bucket=? AND subject_hash=? AND created_at>=?",
                                    (bucket, subject_hash, now - window)).fetchone()[0]
@@ -1145,30 +1402,37 @@ def short_code_hash(code):
 
 def send_email(recipient, subject, body, reply_to=None):
     """Отправляет письмо через единый ящик поддержки, заданный в окружении."""
-    host = os.environ.get("ZOOLAND_SMTP_HOST")
-    sender = os.environ.get("ZOOLAND_SMTP_FROM", SUPPORT_EMAIL)
+    host = SMTP_HOST
+    sender = SMTP_FROM or SUPPORT_EMAIL
     if not host or not sender:
         return False
-    message = EmailMessage()
-    message["Subject"] = subject
-    message["From"] = sender
-    message["To"] = recipient
-    if reply_to:
-        message["Reply-To"] = reply_to
-    message.set_content(body)
     try:
-        with smtplib.SMTP(host, int(os.environ.get("ZOOLAND_SMTP_PORT", "587")), timeout=15) as smtp:
-            if os.environ.get("ZOOLAND_SMTP_TLS", "1") != "1":
+        # Тема иногда содержит пользовательское название поиска или обращения.
+        # Переносы строк нельзя передавать в email-заголовки: это и ошибка
+        # EmailMessage, и классический вектор подмены заголовков.
+        safe_subject = re.sub(r"[\r\n]+", " ", str(subject or "")).strip()[:200]
+        message = EmailMessage()
+        message["Subject"] = safe_subject
+        message["From"] = sender
+        message["To"] = recipient
+        if reply_to:
+            message["Reply-To"] = reply_to
+        message.set_content(str(body or ""))
+        with smtplib.SMTP(host, SMTP_PORT, timeout=15) as smtp:
+            if not SMTP_TLS:
                 raise smtplib.SMTPException("ZooLand requires verified STARTTLS for SMTP")
             smtp.ehlo()
             smtp.starttls(context=ssl.create_default_context())
             smtp.ehlo()
-            username = os.environ.get("ZOOLAND_SMTP_USERNAME")
+            username = SMTP_USERNAME
             if username:
-                smtp.login(username, os.environ.get("ZOOLAND_SMTP_PASSWORD", ""))
+                smtp.login(username, SMTP_PASSWORD)
             smtp.send_message(message)
         return True
-    except (OSError, smtplib.SMTPException):
+    except (OSError, TypeError, ValueError, smtplib.SMTPException) as error:
+        # Не пишем recipient, тело, код или ответ сервера: только безопасный
+        # класс ошибки, достаточный для первичной диагностики.
+        app.logger.warning("SMTP delivery failed (%s).", type(error).__name__)
         return False
 
 
@@ -1176,6 +1440,14 @@ def public_url(endpoint, **values):
     """Строит ссылки в письмах только на заранее настроенный домен, без Host header."""
     relative_path = url_for(endpoint, _external=False, **values)
     return urljoin(PUBLIC_BASE_URL + "/", relative_path.lstrip("/"))
+
+
+def local_referrer_or(endpoint, **values):
+    """Не позволяет внешнему Referer превратить redirect в open redirect."""
+    referrer = request.referrer
+    if referrer and request_origin_is_trusted(referrer):
+        return referrer
+    return url_for(endpoint, **values)
 
 
 def send_password_reset_email(recipient, reset_url):
@@ -1241,6 +1513,8 @@ def create_admin_login_code(user_id, email):
 
 
 def password_error(password, *, name="", email=""):
+    if len(password) > MAX_PASSWORD_LENGTH:
+        return f"Пароль не должен быть длиннее {MAX_PASSWORD_LENGTH} символов."
     if len(password) < 10:
         return "Пароль должен содержать не менее 10 символов."
     normalized = password.casefold()
@@ -1349,6 +1623,24 @@ def delete_user_and_associated_data(user_id):
             )
 
     try:
+        # Рекламная заявка содержит контактные данные и ИНН и напрямую
+        # принадлежит аккаунту. При удалении профиля убираем её статистику,
+        # черновики и саму заявку в одной транзакции.
+        if "advertising_requests" in existing_tables:
+            if "advertising_daily_metrics" in existing_tables:
+                connection.execute(
+                    "DELETE FROM advertising_daily_metrics WHERE request_id IN "
+                    "(SELECT id FROM advertising_requests WHERE user_id=?)",
+                    (user_id,),
+                )
+            if "advertising_revisions" in existing_tables:
+                connection.execute(
+                    "DELETE FROM advertising_revisions WHERE owner_id=? OR request_id IN "
+                    "(SELECT id FROM advertising_requests WHERE user_id=?)",
+                    (user_id, user_id),
+                )
+            connection.execute("DELETE FROM advertising_requests WHERE user_id=?", (user_id,))
+
         # Уведомления сохранённых поисков сначала — до удаления самих поисков.
         if "search_notifications" in existing_tables:
             connection.execute(
@@ -1422,7 +1714,11 @@ def delete_user_and_associated_data(user_id):
             subjects = {str(user_id), (user["email"] or "").casefold()}
             if user["pending_email"]:
                 subjects.add(user["pending_email"].casefold())
-            subject_hashes = [sha256(subject.encode("utf-8")).hexdigest() for subject in subjects if subject]
+            rate_key = app.secret_key.encode("utf-8")
+            subject_hashes = [
+                hmac.new(rate_key, subject.encode("utf-8"), sha256).hexdigest()
+                for subject in subjects if subject
+            ]
             if subject_hashes:
                 placeholders = ", ".join("?" for _ in subject_hashes)
                 connection.execute(
@@ -1566,6 +1862,19 @@ def discard_listing_revision(listing_type, listing_id, base_photo=""):
     return cleanup
 
 
+def delete_listing_dependencies(listing_type, listing_id):
+    """Удаляет ссылки на карточку, чтобы после неё не оставались битые диалоги."""
+    connection = db()
+    for table in (
+        "favorites", "reports", "listing_daily_metrics", "search_notifications",
+        "messages", "dialog_states", "dialog_blocks",
+    ):
+        connection.execute(
+            f"DELETE FROM {table} WHERE listing_type=? AND listing_id=?",
+            (listing_type, listing_id),
+        )
+
+
 def apply_listing_revision(revision_id):
     """Атомарно переносит одобренные поля в карточку, сохраняя её историю."""
     revision = db().execute("SELECT * FROM listing_revisions WHERE id=?", (revision_id,)).fetchone()
@@ -1697,20 +2006,39 @@ def nonnegative_int(value, default=0):
 
 
 def notify_saved_searches(listing_type, listing_id):
-    """Рассылает одно письмо на каждое новое подходящее объявление."""
+    """Ставит рассылку в очередь, не блокируя web-worker вызовами SMTP."""
+    if listing_type not in {"animal", "service", "food"}:
+        return False
+    db().execute(
+        """INSERT OR IGNORE INTO saved_search_jobs
+               (listing_type, listing_id, created_at)
+           VALUES (?, ?, ?)""",
+        (listing_type, listing_id, utcnow()),
+    )
+    db().commit()
+    return True
+
+
+def deliver_saved_search_notifications(listing_type, listing_id):
+    """Отправляет письма вне HTTP-запроса; возвращает число ошибок SMTP."""
     table = {"animal": "animals", "service": "services", "food": "food"}.get(listing_type)
     if not table:
-        return
+        return 0
     listing = db().execute(
         f"SELECT * FROM {table} WHERE id=? AND status='active' AND {PUBLIC_OUTCOME_SQL}",
         (listing_id,),
     ).fetchone()
     if not listing:
-        return
+        return 0
     kind_value = {"animal": "animals", "service": "services", "food": "food"}[listing_type]
     listing_data = dict(listing)
     search_text = " ".join(str(listing_data.get(key) or "") for key in ("title", "type", "breed", "description", "category")).casefold()
+    failed_deliveries = 0
     for saved in db().execute("SELECT s.*, u.email FROM saved_searches s JOIN users u ON u.id=s.user_id").fetchall():
+        # Старая строка могла появиться до введения лимитов. Не парсим
+        # многомегабайтный JSON из такой записи.
+        if len(saved["filters_json"] or "") > 4_096:
+            continue
         try:
             filters = json.loads(saved["filters_json"])
         except (TypeError, json.JSONDecodeError):
@@ -1718,6 +2046,8 @@ def notify_saved_searches(listing_type, listing_id):
         if not isinstance(filters, dict) or filters.get("kind") not in ("", kind_value):
             continue
         if saved["user_id"] == listing["user_id"]:
+            continue
+        if filters.get("country") and filters["country"] != (listing["country_code"] or "RU"):
             continue
         if filters.get("city") and filters["city"] != listing["city"]:
             continue
@@ -1743,7 +2073,49 @@ def notify_saved_searches(listing_type, listing_id):
         details_url = public_url({"animal": "animal_detail", "service": "service_detail", "food": "food_detail"}[listing_type], **{f"{listing_type}_id": listing_id})
         if send_email(saved["email"], f"ZooLand: новое объявление по подписке «{saved['name']}»", f"Появилось подходящее объявление: {label}\n\n{details_url}"):
             db().execute("INSERT INTO search_notifications (saved_search_id, listing_type, listing_id, sent_at) VALUES (?, ?, ?, ?)", (saved["id"], listing_type, listing_id, utcnow()))
+        else:
+            failed_deliveries += 1
     db().commit()
+    return failed_deliveries
+
+
+def process_saved_search_jobs(max_jobs=10):
+    """Обрабатывает ограниченную партию задач рассылки в CLI/worker."""
+    try:
+        limit = max(1, min(int(max_jobs), 100))
+    except (TypeError, ValueError):
+        limit = 10
+    jobs = db().execute(
+        """SELECT id, listing_type, listing_id
+             FROM saved_search_jobs
+            WHERE processed_at IS NULL AND attempts < 10
+            ORDER BY id
+            LIMIT ?""",
+        (limit,),
+    ).fetchall()
+    completed = 0
+    retrying = 0
+    for job in jobs:
+        failures = deliver_saved_search_notifications(job["listing_type"], job["listing_id"])
+        attempted_at = utcnow()
+        if failures:
+            db().execute(
+                """UPDATE saved_search_jobs
+                      SET attempts=attempts+1, last_attempt_at=?
+                    WHERE id=?""",
+                (attempted_at, job["id"]),
+            )
+            retrying += 1
+        else:
+            db().execute(
+                """UPDATE saved_search_jobs
+                      SET attempts=attempts+1, last_attempt_at=?, processed_at=?
+                    WHERE id=?""",
+                (attempted_at, attempted_at, job["id"]),
+            )
+            completed += 1
+        db().commit()
+    return completed, retrying
 
 
 KNOWN_EMAIL_DOMAINS = {
@@ -1754,12 +2126,120 @@ KNOWN_EMAIL_DOMAINS = {
 
 def is_valid_email(value):
     email = (value or "").strip().casefold()
-    return bool(re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", email) and email.rsplit("@", 1)[1] in KNOWN_EMAIL_DOMAINS)
+    return bool(
+        len(email) <= MAX_EMAIL_LENGTH
+        and re.fullmatch(r"[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9-]+(?:\.[a-z0-9-]+)+", email)
+        and email.rsplit("@", 1)[1] in KNOWN_EMAIL_DOMAINS
+    )
 
 
 def normalize_search(value):
     """Нормализует строку для поиска на русском, английском и ошибочной раскладке."""
     return " ".join("".join(char if char.isalnum() else " " for char in (value or "").casefold().replace("ё", "е")).split())
+
+
+# Чат показывает текст в диалоге, превью и push-уведомлении. Маскировка
+# остаётся чистой серверной функцией и повторяется на чтении для старых строк.
+# Шаблоны получают обычную строку, поэтому стандартное Jinja-экранирование
+# продолжает защищать HTML.
+_CHAT_WORD_CHARACTERS = "0-9A-Za-zА-Яа-яЁё"
+_CHAT_PROFANITY_SEPARATOR = rf"[^{_CHAT_WORD_CHARACTERS}]{{0,8}}"
+_CHAT_PROFANITY_LEFT_BOUNDARY = rf"(?<![{_CHAT_WORD_CHARACTERS}])"
+_CHAT_PROFANITY_RIGHT_BOUNDARY = rf"(?![{_CHAT_WORD_CHARACTERS}])"
+_CHAT_PROFANITY_TAIL = rf"[{_CHAT_WORD_CHARACTERS}]*"
+_CHAT_PROFANITY_ATOMS = {
+    "а": r"[аa@]", "б": r"[бb6]", "в": r"[вv]", "г": r"[гg]",
+    "д": r"[дd]", "е": r"[еёe]", "з": r"[зz3]", "и": r"[иi1u]",
+    "й": r"[йijy]", "к": r"[кk]", "л": r"[лl]", "м": r"[мm]",
+    "н": r"[нn]", "о": r"[оo0]", "п": r"[пp]", "р": r"[рr]",
+    "с": r"[сcs]", "т": r"[тt]", "у": r"[уuy]", "х": r"[хxh]",
+    "ц": r"[цc]", "ч": r"[ч4]", "ш": r"[шw]", "ы": r"[ыy]", "ю": r"[ю]",
+    "я": r"[я]",
+}
+
+
+def _chat_flexible_letters(value):
+    """Regex слова с повторами и короткими разделителями между буквами."""
+    return _CHAT_PROFANITY_SEPARATOR.join(
+        rf"(?:{_CHAT_PROFANITY_ATOMS[letter]})+" for letter in value
+    )
+
+
+def _chat_compile_profanity_patterns():
+    words = set()
+    for prefix in ("", "на", "ни", "по", "о", "а", "за", "от", "до", "под", "про", "при"):
+        for root in ("хуй", "хуя", "хуе", "хуи", "хуйн", "хуев", "хуесос", "хуило"):
+            words.add(prefix + root)
+    for prefix in ("", "с", "на", "за", "рас", "раз", "про", "по", "от", "до", "пере", "при"):
+        for root in ("пизд", "пизда", "пизде", "пиздец", "пизду", "пизды", "пиздюк"):
+            words.add(prefix + root)
+    for prefix in ("", "в", "вы", "до", "за", "на", "об", "от", "пере", "по", "под", "при", "про", "раз", "с", "у"):
+        for root in ("ебат", "ебан", "ебал", "ебаш", "ебуч", "ебет", "ебеш", "еби", "ебу", "ебок", "ебен", "ебл"):
+            words.add(prefix + root)
+    words.update({
+        "мудак", "мудач", "мудил", "мудозвон", "долбоеб", "гандон", "гондон",
+        "шлюх", "пидор", "пидар", "педерас", "залуп", "сучар",
+    })
+
+    patterns = [
+        re.compile(
+            _CHAT_PROFANITY_LEFT_BOUNDARY
+            + _chat_flexible_letters(word)
+            + _CHAT_PROFANITY_TAIL
+            + _CHAT_PROFANITY_RIGHT_BOUNDARY,
+            re.IGNORECASE,
+        )
+        for word in sorted(words, key=len, reverse=True)
+    ]
+
+    # «я» в латинской транслитерации обычно пишут двумя буквами: ya.
+    b = rf"(?:{_CHAT_PROFANITY_ATOMS['б']})+"
+    l = rf"(?:{_CHAT_PROFANITY_ATOMS['л']})+"
+    a = rf"(?:{_CHAT_PROFANITY_ATOMS['а']})+"
+    ya = rf"(?:(?:{_CHAT_PROFANITY_ATOMS['я']})+|[y]+{_CHAT_PROFANITY_SEPARATOR}{a})"
+    d_or_t = r"(?:[дd]+|[тt]+)"
+    patterns.append(re.compile(
+        _CHAT_PROFANITY_LEFT_BOUNDARY + b + _CHAT_PROFANITY_SEPARATOR
+        + l + _CHAT_PROFANITY_SEPARATOR + ya + _CHAT_PROFANITY_SEPARATOR
+        + d_or_t + _CHAT_PROFANITY_TAIL + _CHAT_PROFANITY_RIGHT_BOUNDARY,
+        re.IGNORECASE,
+    ))
+    # Самостоятельное междометие скрывается, но «бляха», «рубля» и «дубляж» — нет.
+    patterns.append(re.compile(
+        _CHAT_PROFANITY_LEFT_BOUNDARY + b + _CHAT_PROFANITY_SEPARATOR
+        + l + _CHAT_PROFANITY_SEPARATOR + ya + _CHAT_PROFANITY_RIGHT_BOUNDARY,
+        re.IGNORECASE,
+    ))
+    return tuple(patterns)
+
+
+_CHAT_PROFANITY_PATTERNS = _chat_compile_profanity_patterns()
+
+
+def _chat_search_copy(value):
+    """Односимвольная NFKC-копия сохраняет индексы исходной строки."""
+    folded = []
+    for character in value:
+        normalized = unicodedata.normalize("NFKC", character).casefold().replace("ё", "е")
+        folded.append(normalized[0] if normalized else " ")
+    return "".join(folded)
+
+
+def mask_chat_profanity(value):
+    """Скрывает однозначную брань, сохраняя длину и пунктуацию сообщения."""
+    source = str(value or "")
+    if not source:
+        return ""
+    search_copy = _chat_search_copy(source)
+    hidden = [False] * len(source)
+    for pattern in _CHAT_PROFANITY_PATTERNS:
+        for match in pattern.finditer(search_copy):
+            for index in range(match.start(), match.end()):
+                if source[index].isalnum():
+                    hidden[index] = True
+    if not any(hidden):
+        return source
+    return "".join("*" if hidden[index] else character for index, character in enumerate(source))
 
 
 def latin_to_russian(value):
@@ -1872,8 +2352,12 @@ ANIMAL_FIELD_LABELS = {
     "breed": "порода",
     "age": "возраст",
     "price": "цена",
+    "country": "страну",
     "city": "город",
     "contacts": "номер телефона",
+    "description": "описание",
+    "birth_date": "дату рождения",
+    "sex": "пол",
 }
 
 
@@ -1887,8 +2371,11 @@ def validate_animal_listing(data, profile_phone=None, current_phone=None):
     errors = {}
     animal_type = (data.get("type") or "").strip()
     breed = (data.get("breed") or "").strip()
-    city = (data.get("city") or "").strip()
+    _country_code, city, location_error = normalize_listing_location(data)
     deal_type = (data.get("deal_type") or "sale").strip()
+    description = (data.get("description") or "").strip()
+    birth_date = (data.get("birth_date") or "").strip()
+    sex = (data.get("sex") or "").strip()
 
     if animal_type not in ANIMAL_TYPES:
         errors["type"] = "Выберите вид животного."
@@ -1910,12 +2397,16 @@ def validate_animal_listing(data, profile_phone=None, current_phone=None):
                 if field == "age" else "Укажите корректную цену."
             )
 
-    if not city:
-        errors["city"] = "Укажите город."
-    elif len(city) > 100:
-        errors["city"] = "Название города не должно быть длиннее 100 символов."
+    if location_error:
+        errors["country" if not _country_code else "city"] = location_error
     if deal_type not in DEAL_TYPES:
         errors["deal_type"] = "Выберите корректный тип сделки."
+    if len(description) > MAX_LISTING_DESCRIPTION_LENGTH:
+        errors["description"] = f"Описание не должно быть длиннее {MAX_LISTING_DESCRIPTION_LENGTH} символов."
+    if sex not in {"", "male", "female"}:
+        errors["sex"] = "Выберите корректный пол животного."
+    if birth_date and not valid_birth_date(birth_date):
+        errors["birth_date"] = "Укажите корректную дату рождения не позднее сегодняшнего дня."
 
     phone_source = data.get("phone_source")
     use_saved_phone = phone_source in {"profile", "current"}
@@ -1929,6 +2420,69 @@ def validate_animal_listing(data, profile_phone=None, current_phone=None):
         errors["contacts"] = "Укажите корректный международный номер телефона."
 
     return errors
+
+
+def valid_birth_date(value):
+    """Принимает только реальную ISO-дату в разумном диапазоне."""
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return False
+    return datetime(1900, 1, 1).date() <= parsed <= datetime.now(timezone.utc).date()
+
+
+def validate_catalog_listing(data, listing_type):
+    """Нормализует и проверяет формы услуг и товаров на стороне сервера."""
+    if listing_type == "service":
+        classifier_field = "type"
+        allowed_classifiers = SERVICE_TYPES
+        classifier_error = "Выберите корректный тип услуги."
+    elif listing_type == "food":
+        classifier_field = "category"
+        allowed_classifiers = PRODUCT_TYPES
+        classifier_error = "Выберите корректную категорию товара."
+    else:
+        raise ValueError("Неизвестный тип объявления")
+
+    classifier = (data.get(classifier_field) or "").strip()
+    title = (data.get("title") or "").strip()
+    country_code, city, location_error = normalize_listing_location(data)
+    description = (data.get("description") or "").strip()
+    raw_price = (data.get("price") or "").strip()
+    errors = []
+
+    if classifier not in allowed_classifiers:
+        errors.append(classifier_error)
+    if not 3 <= len(title) <= MAX_LISTING_TITLE_LENGTH:
+        errors.append(f"Название должно содержать от 3 до {MAX_LISTING_TITLE_LENGTH} символов.")
+    if location_error:
+        errors.append(location_error)
+    if len(description) > MAX_LISTING_DESCRIPTION_LENGTH:
+        errors.append(f"Описание не должно быть длиннее {MAX_LISTING_DESCRIPTION_LENGTH} символов.")
+
+    try:
+        price = int(raw_price) if raw_price else 0
+    except (TypeError, ValueError):
+        price = 0
+        errors.append("Укажите цену целым числом.")
+    else:
+        if not 0 <= price <= MAX_LISTING_PRICE:
+            errors.append("Укажите корректную цену от 0 до 100 000 000 ₽.")
+
+    normalized = {
+        classifier_field: classifier,
+        "title": title,
+        "country_code": country_code,
+        "city": city,
+        "price": price,
+        "description": description,
+    }
+    if listing_type == "service":
+        selected_pet_types = list(dict.fromkeys(data.getlist("pet_types")))
+        if any(pet_type not in PET_TYPES for pet_type in selected_pet_types):
+            errors.append("Выберите виды животных только из предложенного списка.")
+        normalized["pet_types"] = ",".join(selected_pet_types) if selected_pet_types else "Другие животные"
+    return normalized, errors
 
 
 def animal_validation_redirect(errors, *, animal_id=None):
@@ -1957,7 +2511,7 @@ def current_user():
     user_id = session.get("user_id")
     if not user_id:
         return None
-    user = db().execute("SELECT id, name, email, phone, email_verified, city, gender, birth_date, about, avatar, telegram, is_admin, session_version FROM users WHERE id=?", (user_id,)).fetchone()
+    user = db().execute("SELECT id, name, email, phone, email_verified, country_code, city, gender, birth_date, about, avatar, telegram, is_admin, session_version FROM users WHERE id=?", (user_id,)).fetchone()
     if not user or session.get("session_version") != user["session_version"]:
         session.clear()
         return None
@@ -1973,7 +2527,14 @@ def current_user_is_moderator():
 
 
 def establish_authenticated_session(user):
-    """Начинает новую сессию после входа/подтверждения и исключает фиксацию старой."""
+    """Начинает подтверждённую сессию и сохраняет только её последний валидный IP."""
+    client_ip = _client_ip_for_storage()
+    if client_ip:
+        db().execute(
+            "UPDATE users SET last_auth_ip=?, last_auth_at=? WHERE id=?",
+            (client_ip, utcnow(), user["id"]),
+        )
+        db().commit()
     session.clear()
     session.permanent = True
     session["user_id"] = user["id"]
@@ -2049,12 +2610,35 @@ def cleanup_expired():
     # Для статистики достаточно последних 30 дней с небольшим запасом.
     cutoff = (datetime.now(timezone.utc).date() - timedelta(days=35)).isoformat()
     connection.execute("DELETE FROM listing_daily_metrics WHERE metric_day<?", (cutoff,))
+    # IP нужен только для недавней проверки безопасности аккаунта. Историю не
+    # ведём: новое значение перезаписывает старое, а устаревшее удаляется.
+    auth_ip_cutoff = (
+        datetime.now(timezone.utc) - timedelta(days=AUTH_IP_RETENTION_DAYS)
+    ).isoformat()
+    connection.execute(
+        """UPDATE users SET last_auth_ip=NULL, last_auth_at=NULL
+             WHERE last_auth_at IS NOT NULL AND last_auth_at<?""",
+        (auth_ip_cutoff,),
+    )
     connection.commit()
 
 
 @app.before_request
 def housekeeping():
+    global _next_housekeeping_at
+    # Flask вызывает before_request и для своей статики. CSS/JS/фотографии не
+    # должны порождать UPDATE/DELETE/COMMIT и позволять write-lock DoS.
+    if request.path.startswith("/static/") or request.path == "/healthz":
+        return None
+    now = time.monotonic()
+    if now < _next_housekeeping_at:
+        return None
+    # Ставим срок до транзакции, чтобы параллельные потоки этого процесса не
+    # запускали одну и ту же уборку. Между Gunicorn workers возможен лишь один
+    # короткий запуск раз в пять минут; SQLite сериализует эти транзакции.
+    _next_housekeeping_at = now + 300
     cleanup_expired()
+    return None
 
 
 def login_required(view):
@@ -2088,6 +2672,7 @@ def global_template_data():
                 db().execute("SELECT listing_type, listing_id FROM favorites WHERE user_id=?", (user["id"],)).fetchall()}
     return {"account_user": user, "animal_types": ANIMAL_TYPES, "breeds": BREEDS, "can_manage": can_manage,
             "russian_cities": RUSSIAN_CITIES, "service_types": SERVICE_TYPES, "pet_types": PET_TYPES,
+            "location_countries": LOCATION_COUNTRY_OPTIONS, "default_country": "RU",
             "food_types": FOOD_TYPES, "accessory_types": ACCESSORY_TYPES, "deal_types": DEAL_TYPES, "deal_type_labels": DEAL_TYPE_LABELS,
             "outcome_status_labels": OUTCOME_STATUS_LABELS, "outcome_status_options": OUTCOME_STATUS_OPTIONS,
             "final_outcome_statuses": FINAL_OUTCOME_STATUSES,
@@ -2095,11 +2680,45 @@ def global_template_data():
             "is_favorite": lambda t, i: f"{t}:{i}" in favs}
 
 
+def bounded_query_value(key, limit, default=""):
+    value = (request.args.get(key, default) or "").strip()
+    if len(value) > limit:
+        abort(400, description="Параметр запроса слишком длинный.")
+    return value
+
+
+def bounded_location_query():
+    """Проверяет пару country/city в публичных фильтрах каталога."""
+    country_code = bounded_query_value("country", 2).upper()
+    city = bounded_query_value("city", MAX_LISTING_CITY_LENGTH)
+    if not country_code:
+        if city:
+            abort(400, description="Сначала выберите страну.")
+        return "", ""
+    if country_code not in CITY_SETS_BY_COUNTRY:
+        abort(400, description="Выберите корректную страну.")
+    if city and city not in CITY_SETS_BY_COUNTRY[country_code]:
+        abort(400, description="Выберите город из списка выбранной страны.")
+    return country_code, city
+
+
 @app.route("/")
 def index():
-    city, animal_type, search, kind = (request.args.get(key, "").strip() for key in ("city", "type", "q", "kind"))
-    sort = request.args.get("sort", "new")
-    filters = {key: request.args.get(key, "").strip() for key in ("price_min", "price_max", "age_min", "age_max", "sex", "breed", "deal", "only_photo", "vaccinated", "delivery")}
+    country_code, city = bounded_location_query()
+    animal_type = bounded_query_value("type", 80)
+    search = bounded_query_value("q", MAX_SAVED_SEARCH_QUERY_LENGTH)
+    kind = bounded_query_value("kind", 16)
+    sort = bounded_query_value("sort", 20, "new")
+    filters = {
+        key: bounded_query_value(
+            key,
+            120 if key == "breed" else 16,
+        )
+        for key in (
+            "price_min", "price_max", "age_min", "age_max", "sex", "breed", "deal",
+            "only_photo", "vaccinated", "delivery",
+        )
+    }
     search_kinds = inferred_search_kinds(search, kind, animal_type, filters)
     def number(value):
         try: return max(0, int(value)) if value else None
@@ -2107,6 +2726,7 @@ def index():
     # Животные (объявления о продаже) — бесплатная публикация.
     if "animals" in search_kinds:
         query, conditions, params = "SELECT * FROM animals", ["status='active'", PUBLIC_OUTCOME_SQL], []
+        if country_code: conditions.append("country_code=?"); params.append(country_code)
         if city: conditions.append("city=?"); params.append(city)
         if animal_type: conditions.append("type=?"); params.append(animal_type)
         if filters["breed"]: conditions.append("breed LIKE ?"); params.append(f"%{filters['breed']}%")
@@ -2129,6 +2749,7 @@ def index():
     # Услуги для животных.
     if "services" in search_kinds:
         query, conditions, params = "SELECT * FROM services", ["status='active'", PUBLIC_OUTCOME_SQL], []
+        if country_code: conditions.append("country_code=?"); params.append(country_code)
         if city: conditions.append("city=?"); params.append(city)
         for key, op in (("price_min", ">="), ("price_max", "<=")):
             if (value := number(filters[key])) is not None: conditions.append(f"price{op}?"); params.append(value)
@@ -2154,6 +2775,7 @@ def index():
         placeholders = ",".join("?" for _ in product_categories)
         conditions.append(f"category IN ({placeholders})")
         params.extend(product_categories)
+        if country_code: conditions.append("country_code=?"); params.append(country_code)
         if city: conditions.append("city=?"); params.append(city)
         for key, op in (("price_min", ">="), ("price_max", "<=")):
             if (value := number(filters[key])) is not None: conditions.append(f"price{op}?"); params.append(value)
@@ -2176,7 +2798,7 @@ def index():
     )
     category_ads = active_advertisements("category-banner", page_category, city=city) if page_category != "all" else []
     return render_template("index.html", items=items, animals=animals, services=services, food=food,
-                           cities=RUSSIAN_CITIES, selected_city=city, selected_type=animal_type,
+                           cities=RUSSIAN_CITIES, selected_country=country_code, selected_city=city, selected_type=animal_type,
                            search=search, sort=sort, kind=kind, filters=filters,
                            homepage_ads=homepage_ads, category_ads=category_ads)
 
@@ -2193,16 +2815,18 @@ def animal_detail(animal_id):
         owner = db().execute("SELECT id, name, telegram FROM users WHERE id=?", (animal["user_id"],)).fetchone()
     is_owner = bool(user and animal["user_id"] == user["id"])
     similar = []
-    animal_coords = CITY_COORDS.get(animal["city"])
+    animal_country = animal["country_code"] or "RU"
+    animal_coords = CITY_COORDS.get((animal_country, animal["city"]))
     if animal_coords:
         # Близкие города в радиусе 50 км от города объявления.
-        nearby_cities = {city for city, coords in CITY_COORDS.items()
-                         if distance_km(animal_coords[0], animal_coords[1], coords[0], coords[1]) <= SIMILAR_RADIUS_KM}
+        nearby_cities = {city for (country_code, city), coords in CITY_COORDS.items()
+                         if country_code == animal_country and
+                         distance_km(animal_coords[0], animal_coords[1], coords[0], coords[1]) <= SIMILAR_RADIUS_KM}
         if nearby_cities:
             placeholders = ",".join("?" for _ in nearby_cities)
             similar = db().execute(
-                f"SELECT * FROM animals WHERE status='active' AND {PUBLIC_OUTCOME_SQL} AND type=? AND city IN ({placeholders}) AND id!=? ORDER BY id DESC LIMIT ?",
-                (animal["type"], *nearby_cities, animal_id, SIMILAR_LIMIT)).fetchall()
+                f"SELECT * FROM animals WHERE status='active' AND {PUBLIC_OUTCOME_SQL} AND type=? AND country_code=? AND city IN ({placeholders}) AND id!=? ORDER BY id DESC LIMIT ?",
+                (animal["type"], animal_country, *nearby_cities, animal_id, SIMILAR_LIMIT)).fetchall()
     review_context = owner_review_context(owner, "animal", animal_id, user)
     outcome = animal["deal_status"] or "open"
     return render_template("animal.html", animal=animal, owner=owner, similar=similar,
@@ -2214,11 +2838,16 @@ def animal_detail(animal_id):
 @app.route("/services")
 def services_list():
     """Каталог услуг для животных."""
-    service_type, city, search = (request.args.get(key, "").strip() for key in ("type", "city", "q"))
+    service_type = bounded_query_value("type", 80)
+    country_code, city = bounded_location_query()
+    search = bounded_query_value("q", MAX_SAVED_SEARCH_QUERY_LENGTH)
     query, conditions, params = "SELECT * FROM services", ["status='active'", PUBLIC_OUTCOME_SQL], []
     if service_type:
         conditions.append("type=?")
         params.append(service_type)
+    if country_code:
+        conditions.append("country_code=?")
+        params.append(country_code)
     if city:
         conditions.append("city=?")
         params.append(city)
@@ -2231,7 +2860,7 @@ def services_list():
     services = apply_promoted_listings(services, "services", fixed_listing_type="service", city=city)
     category_ads = active_advertisements("category-banner", "services", city=city)
     return render_template("services.html", services=services, cities=RUSSIAN_CITIES,
-                           selected_type=service_type, selected_city=city, search=search,
+                           selected_type=service_type, selected_country=country_code, selected_city=city, search=search,
                            category_ads=category_ads)
 
 
@@ -2262,25 +2891,22 @@ def service_detail(service_id):
 def add_service():
     user = current_user()
     data = request.form
-    service_type = data.get("type", "")
-    title = data.get("title", "").strip()
-    if service_type not in SERVICE_TYPES or len(title) < 3:
-        flash("Выберите тип услуги и укажите название не короче 3 символов.", "error")
+    values, errors = validate_catalog_listing(data, "service")
+    if errors:
+        flash("Не удалось опубликовать услугу: " + " ".join(errors), "error")
         return redirect(url_for("services_list"))
     if not allow_sensitive_action("publish", str(user["id"])):
         flash("Слишком много новых объявлений. Попробуйте позже.", "error")
         return redirect(url_for("services_list"))
-    pet_types = ",".join(data.getlist("pet_types")) if data.getlist("pet_types") else "Другие животные"
-    city = data.get("city", "").strip()
     try:
         filenames = save_photos(request.files.getlist("photos"))
     except ValueError as error:
         flash(str(error), "error")
         return redirect(url_for("services_list"))
     photos = ",".join(filenames)
-    db().execute("""INSERT INTO services (type, title, pet_types, city, price, description, photo, contacts, telegram, user_id, status, created_at, expires_at, months_published, contact_methods)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
-                 (service_type, title, pet_types, city, data.get("price", 0) or 0, data.get("description", ""), photos,
+    db().execute("""INSERT INTO services (type, title, pet_types, country_code, city, price, description, photo, contacts, telegram, user_id, status, created_at, expires_at, months_published, contact_methods)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)""",
+                 (values["type"], values["title"], values["pet_types"], values["country_code"], values["city"], values["price"], values["description"], photos,
                   user["phone"] or "", user["telegram"] or "", user["id"], utcnow(), iso_after_days(SERVICE_DAYS), 0,
                   listing_contact_methods(data)))
     db().commit()
@@ -2310,7 +2936,7 @@ def delete_service(service_id):
     if not service:
         abort(404)
     revision_photos = discard_listing_revision("service", service_id, service["photo"])
-    db().execute("DELETE FROM listing_daily_metrics WHERE listing_type='service' AND listing_id=?", (service_id,))
+    delete_listing_dependencies("service", service_id)
     db().execute("DELETE FROM services WHERE id=?", (service_id,))
     db().commit()
     delete_photos(service["photo"])
@@ -2327,10 +2953,9 @@ def edit_service(service_id):
         abort(404)
     revision = get_listing_revision("service", service_id)
     if request.method == "POST":
-        title = request.form.get("title", "").strip()
-        service_type = request.form.get("type", "")
-        if service_type not in SERVICE_TYPES or len(title) < 3:
-            flash("Выберите тип услуги и укажите название не короче 3 символов.", "error")
+        values, errors = validate_catalog_listing(request.form, "service")
+        if errors:
+            flash("Не удалось сохранить услугу: " + " ".join(errors), "error")
             return redirect(url_for("edit_service", service_id=service_id))
         try:
             new_photos = save_photos(request.files.getlist("photos"))
@@ -2344,12 +2969,13 @@ def edit_service(service_id):
         refresh_profile_contacts = request.form.get("refresh_profile_contacts") == "1"
         profile_contacts = current_user()
         payload = {
-            "type": service_type,
-            "title": title,
-            "pet_types": ",".join(request.form.getlist("pet_types")) or "Другие животные",
-            "city": request.form.get("city", "").strip(),
-            "price": nonnegative_int(request.form.get("price", 0)),
-            "description": request.form.get("description", ""),
+            "type": values["type"],
+            "title": values["title"],
+            "pet_types": values["pet_types"],
+            "country_code": values["country_code"],
+            "city": values["city"],
+            "price": values["price"],
+            "description": values["description"],
             "photo": photos,
             # Снимок обновляется из профиля только по явному выбору владельца
             # и затем всё равно проходит отдельную модерацию.
@@ -2373,7 +2999,7 @@ def edit_service(service_id):
             return redirect(url_for("account"))
         old_photo = service["photo"] or ""
         db().execute(
-            """UPDATE services SET type=?, title=?, pet_types=?, city=?, price=?, description=?, photo=?, contacts=?, telegram=?, contact_methods=?,
+            """UPDATE services SET type=?, title=?, pet_types=?, country_code=?, city=?, price=?, description=?, photo=?, contacts=?, telegram=?, contact_methods=?,
                                    status='pending', moderation_reason=NULL, deal_status='open', outcome_at=NULL
                  WHERE id=?""",
             (*[payload[field] for field in LISTING_REVISION_FIELDS["service"]], service_id),
@@ -2394,6 +3020,7 @@ def add_animal():
     validation_errors = validate_animal_listing(data, profile_phone=user["phone"])
     if validation_errors:
         return animal_validation_redirect(validation_errors)
+    country_code, city, _location_error = normalize_listing_location(data)
     phone = user["phone"] if data.get("phone_source") == "profile" else normalize_international_phone(data.get("contacts"), data.get("phone_country_custom") or data.get("phone_country"))
     if not allow_sensitive_action("publish", str(user["id"])):
         flash("Слишком много новых объявлений. Попробуйте позже.", "error")
@@ -2409,9 +3036,9 @@ def add_animal():
         deal_type = "sale"
     methods = listing_contact_methods(data)
     sex = data.get("sex", "") if data.get("sex", "") in ("male", "female") else None
-    db().execute("""INSERT INTO animals (type, breed, age, price, city, description, contacts, photo, user_id, guest_token, status, created_at, expires_at, deal_type, contact_methods, sex, birth_date, vaccinated, vet_passport, pedigree, sterilized, delivery)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                 (data["type"], data["breed"], data["age"], data["price"], data["city"], data.get("description", ""), phone, photos,
+    db().execute("""INSERT INTO animals (type, breed, age, price, country_code, city, description, contacts, photo, user_id, guest_token, status, created_at, expires_at, deal_type, contact_methods, sex, birth_date, vaccinated, vet_passport, pedigree, sterilized, delivery)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 (data["type"], data["breed"].strip(), int(data["age"]), int(data["price"]), country_code, city, data.get("description", "").strip(), phone, photos,
                   user["id"], None, utcnow(), iso_after_days(FREE_DAYS), deal_type, methods, sex, data.get("birth_date") or None,
                   checkbox_value(data, "vaccinated"), checkbox_value(data, "vet_passport"), checkbox_value(data, "pedigree"), checkbox_value(data, "sterilized"), checkbox_value(data, "delivery")))
     db().commit()
@@ -2427,26 +3054,60 @@ def register():
         email = request.form.get("email", "").lower().strip()
         password = request.form.get("password", "")
         phone = normalize_international_phone(request.form.get("phone"), request.form.get("phone_country_custom") or request.form.get("phone_country"))
-        if not allow_sensitive_action("register", email):
+        accepted_terms = request.form.get("accept_terms") == "1"
+        accepted_privacy = request.form.get("accept_privacy") == "1"
+        # Subject-лимит здесь позволил бы постороннему заблокировать чужой
+        # email до регистрации. Ограничиваем только источник запроса.
+        if not allow_sensitive_action("register"):
             flash("Слишком много попыток регистрации. Попробуйте позже.", "error")
-        elif len(name) < 2 or not is_valid_email(email) or not phone:
+        elif not accepted_terms or not accepted_privacy:
+            flash(
+                "Для регистрации отдельно примите условия пользования сайтом "
+                "и согласие на обработку персональных данных.",
+                "error",
+            )
+        elif not 2 <= len(name) <= MAX_PROFILE_NAME_LENGTH or not is_valid_email(email) or not phone:
             flash("Укажите имя, международный номер и корректный email с @ на известном почтовом сервисе.", "error")
         elif (error := password_error(password, name=name, email=email)):
             flash(error, "error")
         elif db().execute("SELECT 1 FROM users WHERE email=? OR phone=?", (email, phone)).fetchone():
             flash("Этот email или номер уже зарегистрирован. Войдите в аккаунт.", "error")
         else:
-            cursor = db().execute("INSERT INTO users (name, email, phone, password_hash, email_verified, created_at) VALUES (?, ?, ?, ?, 0, ?)", (name, email, phone, generate_password_hash(password), utcnow()))
-            token = guest_token()
-            if token: db().execute("UPDATE animals SET user_id=?, guest_token=NULL WHERE guest_token=?", (cursor.lastrowid, token))
-            db().commit()
-            if not create_email_verification_code(cursor.lastrowid, email):
-                db().execute("DELETE FROM users WHERE id=?", (cursor.lastrowid,)); db().commit()
-                flash("Не удалось отправить код подтверждения. Попробуйте зарегистрироваться позже.", "error")
+            accepted_at = utcnow()
+            try:
+                cursor = db().execute(
+                    """INSERT INTO users
+                       (name, email, phone, password_hash, email_verified, created_at,
+                        terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
+                       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                    (
+                        name, email, phone, generate_password_hash(password), accepted_at,
+                        accepted_at, TERMS_VERSION, accepted_at, PRIVACY_VERSION,
+                    ),
+                )
+                db().commit()
+            except sqlite3.IntegrityError:
+                db().rollback()
+                # UNIQUE-индексы закрывают гонку между предварительной
+                # проверкой и INSERT; детали схемы посетителю не раскрываем.
+                flash("Этот email или номер уже зарегистрирован. Войдите в аккаунт.", "error")
             else:
-                session.clear()
-                session["verify_user_id"] = cursor.lastrowid
-                response = redirect(url_for("verify_email")); response.delete_cookie("zooland_guest"); return response
+                if not create_email_verification_code(cursor.lastrowid, email):
+                    db().execute("DELETE FROM users WHERE id=?", (cursor.lastrowid,)); db().commit()
+                    flash("Не удалось отправить код подтверждения. Попробуйте зарегистрироваться позже.", "error")
+                else:
+                    # Переносим гостевые объявления только после успешной отправки
+                    # кода, иначе сбой SMTP оставлял их у удалённого user_id.
+                    token = guest_token()
+                    if token:
+                        db().execute(
+                            "UPDATE animals SET user_id=?, guest_token=NULL WHERE guest_token=?",
+                            (cursor.lastrowid, token),
+                        )
+                        db().commit()
+                    session.clear()
+                    session["verify_user_id"] = cursor.lastrowid
+                    response = redirect(url_for("verify_email")); response.delete_cookie("zooland_guest"); return response
     return render_template("auth.html", mode="register")
 
 
@@ -2455,11 +3116,16 @@ def login():
     if current_user(): return redirect(url_for("account"))
     if request.method == "POST":
         email = request.form.get("email", "").lower().strip()
-        if not allow_sensitive_action("login", email):
+        password = request.form.get("password", "")
+        # Верный пароль не должен блокироваться из-за попыток атакующего с
+        # другого IP, поэтому до проверки учётных данных лимитируем только IP.
+        if not allow_sensitive_action("login"):
             flash("Слишком много попыток входа. Попробуйте через 15 минут.", "error")
             return redirect(url_for("login"))
-        user = db().execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-        if user and check_password_hash(user["password_hash"], request.form.get("password", "")):
+        user = None
+        if len(email) <= MAX_EMAIL_LENGTH and len(password) <= MAX_PASSWORD_LENGTH:
+            user = db().execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+        if user and check_password_hash(user["password_hash"], password):
             if not user["email_verified"]:
                 session.clear()
                 session["verify_user_id"] = user["id"]
@@ -2575,7 +3241,10 @@ def resend_admin_login_code():
 def forgot_password():
     if request.method == "POST":
         email = request.form.get("email", "").lower().strip()
-        user = db().execute("SELECT id, email FROM users WHERE email=?", (email,)).fetchone()
+        user = (
+            db().execute("SELECT id, email FROM users WHERE email=?", (email,)).fetchone()
+            if len(email) <= MAX_EMAIL_LENGTH else None
+        )
         sent = False
         if allow_sensitive_action("password_reset", email) and user:
             reset_url, token_hash = create_password_reset_link(user["id"])
@@ -2621,7 +3290,8 @@ def support():
         email = request.form.get("email", "").lower().strip()
         subject = request.form.get("subject", "").strip()
         body = request.form.get("message", "").strip()
-        if len(name) < 2 or not is_valid_email(email) or len(subject) < 3 or len(body) < 10:
+        if (not 2 <= len(name) <= MAX_PROFILE_NAME_LENGTH or not is_valid_email(email) or
+                not 3 <= len(subject) <= 120 or not 10 <= len(body) <= 5_000):
             flash("Заполните имя, корректный email, тему и сообщение не короче 10 символов.", "error")
         elif not allow_sensitive_action("support", email):
             flash("Слишком много обращений. Попробуйте отправить сообщение позже.", "error")
@@ -3144,6 +3814,89 @@ def vacancies():
     return render_template("vacancies.html", vacancies=VACANCIES)
 
 
+@app.route("/favicon.ico")
+def favicon():
+    """Возвращает компактную иконку без лишнего 404 в браузерной консоли."""
+    return send_from_directory(
+        app.static_folder,
+        "favicon.svg",
+        mimetype="image/svg+xml",
+        conditional=True,
+        max_age=30 * 24 * 60 * 60,
+    )
+
+
+@app.route("/healthz")
+def healthz():
+    """Проверяет схему БД в read-only режиме без сессии и housekeeping-записей."""
+    if not os.path.isfile(DB_NAME):
+        return jsonify(status="unavailable"), 503
+    connection = None
+    try:
+        connection = sqlite3.connect(
+            f"file:{os.path.abspath(DB_NAME)}?mode=ro",
+            uri=True,
+            timeout=1,
+        )
+        connection.execute("PRAGMA query_only=ON")
+        schema_ready = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='users'"
+        ).fetchone()
+    except sqlite3.Error:
+        return jsonify(status="unavailable"), 503
+    finally:
+        if connection is not None:
+            connection.close()
+    return (jsonify(status="ok"), 200) if schema_ready else (jsonify(status="unavailable"), 503)
+
+
+PUBLIC_UPLOAD_NAME_RE = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9_.-]{0,126}\.(?:webp|jpe?g|png)", re.IGNORECASE
+)
+
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    """Безопасно раздаёт публичные фото из настраиваемого data-каталога."""
+    if not PUBLIC_UPLOAD_NAME_RE.fullmatch(filename):
+        abort(404)
+    return send_from_directory(
+        app.config["UPLOAD_FOLDER"],
+        filename,
+        conditional=True,
+        max_age=7 * 24 * 60 * 60,
+    )
+
+
+@app.route("/terms")
+def terms_of_use():
+    return render_template(
+        "terms.html",
+        document_version=TERMS_VERSION,
+        operator_name=DISPLAY_OPERATOR_NAME,
+        operator_address=DISPLAY_OPERATOR_ADDRESS,
+        contact_email=PRIVACY_EMAIL,
+    )
+
+
+@app.route("/privacy")
+def privacy_policy():
+    return render_template(
+        "privacy.html",
+        document_version=PRIVACY_VERSION,
+        operator_name=DISPLAY_OPERATOR_NAME,
+        operator_address=DISPLAY_OPERATOR_ADDRESS,
+        contact_email=PRIVACY_EMAIL,
+        auth_ip_retention_days=AUTH_IP_RETENTION_DAYS,
+    )
+
+
+@app.route("/smartphone-app")
+def smartphone_app():
+    """Публичная страница будущего мобильного приложения ZooLand."""
+    return render_template("smartphone_app.html", tab="smartphone_app")
+
+
 @app.route("/vacancies/<slug>", methods=["GET", "POST"])
 def vacancy_detail(slug):
     vacancy = VACANCIES.get(slug)
@@ -3160,7 +3913,7 @@ def vacancy_detail(slug):
         cover_letter = request.form.get("cover_letter", "").strip()
         resume_url = request.form.get("resume_url", "").strip()
         consent = request.form.get("personal_data_consent") == "yes"
-        resume_parts = urlparse(resume_url) if resume_url else None
+        safe_resume_url = valid_external_http_url(resume_url) if resume_url else ""
         errors = []
         if not 2 <= len(name) <= 80:
             errors.append("укажите имя от 2 до 80 символов")
@@ -3174,7 +3927,7 @@ def vacancy_detail(slug):
             errors.append("расскажите об опыте — от 10 до 1500 символов")
         if not 10 <= len(cover_letter) <= 2000:
             errors.append("напишите несколько слов о себе — от 10 до 2000 символов")
-        if resume_url and (len(resume_url) > 500 or resume_parts.scheme not in {"http", "https"} or not resume_parts.netloc):
+        if resume_url and not safe_resume_url:
             errors.append("ссылка на резюме должна начинаться с http:// или https://")
         if not consent:
             errors.append("подтвердите согласие на обработку данных для рассмотрения отклика")
@@ -3187,7 +3940,7 @@ def vacancy_detail(slug):
             cursor = db().execute("""INSERT INTO job_applications
                 (vacancy_slug, name, email, phone, telegram, experience, cover_letter, resume_url, consent_at, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (slug, name, email, phone, telegram, experience, cover_letter, resume_url, now, now, now))
+                (slug, name, email, phone, telegram, experience, cover_letter, safe_resume_url, now, now, now))
             db().commit()
             application_id = cursor.lastrowid
             send_email(
@@ -3296,7 +4049,7 @@ def settings():
 
 @app.route("/user/<int:user_id>")
 def public_profile(user_id):
-    owner = db().execute("SELECT id, name, city, about, avatar, telegram, created_at FROM users WHERE id=?", (user_id,)).fetchone()
+    owner = db().execute("SELECT id, name, country_code, city, about, avatar, telegram, created_at FROM users WHERE id=?", (user_id,)).fetchone()
     if not owner:
         abort(404)
     listings = []
@@ -3309,19 +4062,113 @@ def public_profile(user_id):
                            **review_context)
 
 
+def normalized_saved_search_filters(form):
+    """Возвращает каноничные ограниченные фильтры или текст ошибки."""
+    filters = {key: (form.get(key, "") or "").strip() for key in SAVED_SEARCH_FILTER_KEYS}
+    for key, limit in SAVED_SEARCH_TEXT_LIMITS.items():
+        if len(filters[key]) > limit:
+            return None, "Один из параметров поиска слишком длинный."
+    filters["country"] = filters["country"].upper()
+    if filters["country"] and filters["country"] not in CITY_SETS_BY_COUNTRY:
+        return None, "Выберите корректную страну."
+    if filters["city"]:
+        if not filters["country"]:
+            return None, "Сначала выберите страну."
+        if filters["city"] not in CITY_SETS_BY_COUNTRY[filters["country"]]:
+            return None, "Выберите город из списка выбранной страны."
+    if filters["kind"] not in {"", "animals", "services", "food", "accessories"}:
+        return None, "Выберите корректный раздел поиска."
+    if filters["type"] and filters["type"] not in ANIMAL_TYPES:
+        return None, "Выберите корректный вид животного."
+    if filters["sex"] not in {"", "male", "female"}:
+        return None, "Выберите корректный пол животного."
+    if filters["deal"] not in {"", *DEAL_TYPES}:
+        return None, "Выберите корректный тип сделки."
+
+    for key in ("only_photo", "vaccinated", "delivery"):
+        if filters[key] not in {"", "1", "on", "true"}:
+            return None, "Параметры поиска содержат недопустимое значение."
+        filters[key] = "1" if filters[key] else ""
+
+    numeric_limits = {
+        "price_min": MAX_LISTING_PRICE,
+        "price_max": MAX_LISTING_PRICE,
+        "age_min": 200,
+        "age_max": 200,
+    }
+    numbers = {}
+    for key, maximum in numeric_limits.items():
+        if not filters[key]:
+            numbers[key] = None
+            continue
+        if not filters[key].isdigit():
+            return None, "Цена и возраст в фильтрах должны быть целыми числами."
+        value = int(filters[key])
+        if value > maximum:
+            return None, "Числовой параметр поиска слишком большой."
+        filters[key] = str(value)
+        numbers[key] = value
+    if (numbers["price_min"] is not None and numbers["price_max"] is not None and
+            numbers["price_min"] > numbers["price_max"]):
+        return None, "Минимальная цена не может быть больше максимальной."
+    if (numbers["age_min"] is not None and numbers["age_max"] is not None and
+            numbers["age_min"] > numbers["age_max"]):
+        return None, "Минимальный возраст не может быть больше максимального."
+    return filters, None
+
+
 @app.route("/searches/save", methods=["POST"])
 @login_required
 def save_search():
-    filters = {key: request.form.get(key, "").strip() for key in ("q", "city", "type", "kind", "price_min", "price_max", "age_min", "age_max", "sex", "breed", "deal", "only_photo", "vaccinated", "delivery")}
+    filters, error = normalized_saved_search_filters(request.form)
+    if error:
+        flash(error, "error")
+        return redirect(url_for("index"))
     if not any(filters.values()):
         flash("Выберите хотя бы один параметр, прежде чем сохранять поиск.", "error")
         return redirect(url_for("index"))
-    name = request.form.get("name", "").strip() or filters.get("q") or "Мой поиск"
-    db().execute("INSERT INTO saved_searches (user_id, name, filters_json, created_at) VALUES (?, ?, ?, ?)",
-                 (current_user()["id"], name[:80], json.dumps(filters, ensure_ascii=False), utcnow()))
-    db().commit()
+    supplied_name = request.form.get("name", "").strip()
+    if len(supplied_name) > MAX_SAVED_SEARCH_NAME_LENGTH:
+        flash("Название сохранённого поиска слишком длинное.", "error")
+        return redirect(url_for("index"))
+    user_id = current_user()["id"]
+    if not allow_sensitive_action("saved_search", str(user_id)):
+        flash("Слишком много сохранённых поисков за короткое время. Попробуйте позже.", "error")
+        return redirect(url_for("index"))
+    name = (supplied_name or filters.get("q") or "Мой поиск")[:MAX_SAVED_SEARCH_NAME_LENGTH]
+    serialized = json.dumps(filters, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    connection = db()
+    try:
+        # IMMEDIATE не даёт двум параллельным запросам обойти квоту.
+        connection.execute("BEGIN IMMEDIATE")
+        saved_count = connection.execute(
+            "SELECT COUNT(*) FROM saved_searches WHERE user_id=?", (user_id,)
+        ).fetchone()[0]
+        duplicate = connection.execute(
+            "SELECT 1 FROM saved_searches WHERE user_id=? AND filters_json=?",
+            (user_id, serialized),
+        ).fetchone()
+        if saved_count >= MAX_SAVED_SEARCHES:
+            connection.rollback()
+            flash(f"Можно сохранить не более {MAX_SAVED_SEARCHES} поисков. Удалите ненужный в кабинете.", "error")
+            return redirect(url_for("account"))
+        if duplicate:
+            connection.rollback()
+            flash("Такой поиск уже сохранён.", "error")
+            return redirect(url_for("account"))
+        connection.execute(
+            "INSERT INTO saved_searches (user_id, name, filters_json, created_at) VALUES (?, ?, ?, ?)",
+            (user_id, name, serialized, utcnow()),
+        )
+        connection.commit()
+    except sqlite3.Error:
+        connection.rollback()
+        app.logger.warning("Saved search transaction failed.")
+        flash("Не удалось сохранить поиск. Попробуйте ещё раз.", "error")
+        return redirect(url_for("index"))
     flash("Поиск сохранён. Мы напишем на email, когда появится подходящее объявление.", "success")
-    return redirect(url_for("index", **{key: value for key, value in filters.items() if value}))
+    destination = url_for("index", **{key: value for key, value in filters.items() if value})
+    return redirect(destination if len(destination) <= 1_900 else url_for("index"))
 
 
 @app.route("/searches/<int:search_id>/delete", methods=["POST"])
@@ -3385,8 +4232,9 @@ def resolve_report(report_id):
 @app.route("/admin/users")
 @admin_required
 def admin_users():
-    """Список пользователей для владельца сайта без приватных контактов."""
-    users = db().execute("""SELECT u.id, u.name, u.email, u.city, u.gender, u.birth_date, u.about, u.telegram, u.created_at,
+    """Закрытый список пользователей с IP последней подтверждённой авторизации."""
+    users = db().execute("""SELECT u.id, u.name, u.email, u.country_code, u.city, u.gender, u.birth_date, u.about, u.telegram, u.created_at,
+                          u.last_auth_ip, u.last_auth_at,
                           (SELECT COUNT(*) FROM animals a WHERE a.user_id=u.id) AS animals_count,
                           (SELECT COUNT(*) FROM services s WHERE s.user_id=u.id) AS services_count,
                           (SELECT COUNT(*) FROM food f WHERE f.user_id=u.id) AS food_count
@@ -3579,10 +4427,17 @@ def admin_reject_revision(revision_id):
 @admin_required
 def admin_approve_listing(listing_type, listing_id):
     table, item = admin_get_listing(listing_type, listing_id)
+    if item["status"] != "pending":
+        abort(409, description="Объявление уже было обработано другим действием.")
     days = LISTING_TABLES[listing_type][2]
     archived_reset = ", archived_at=NULL" if listing_type == "animal" else ""
-    db().execute(f"UPDATE {table} SET status='active', created_at=?, expires_at=?{archived_reset} WHERE id=? AND status='pending'",
-                 (utcnow(), iso_after_days(days), listing_id))
+    updated = db().execute(
+        f"UPDATE {table} SET status='active', created_at=?, expires_at=?{archived_reset} WHERE id=? AND status='pending'",
+        (utcnow(), iso_after_days(days), listing_id),
+    )
+    if updated.rowcount != 1:
+        db().rollback()
+        abort(409, description="Объявление изменилось во время модерации.")
     db().commit()
     owner = db().execute("SELECT email FROM users WHERE id=?", (item["user_id"],)).fetchone()
     if owner:
@@ -3596,8 +4451,16 @@ def admin_approve_listing(listing_type, listing_id):
 @admin_required
 def admin_reject_listing(listing_type, listing_id):
     table, item = admin_get_listing(listing_type, listing_id)
+    if item["status"] != "pending":
+        abort(409, description="Объявление уже было обработано другим действием.")
     reason = moderation_reason_from_form()
-    db().execute(f"UPDATE {table} SET status='rejected', moderation_reason=? WHERE id=? AND status='pending'", (reason, listing_id))
+    updated = db().execute(
+        f"UPDATE {table} SET status='rejected', moderation_reason=? WHERE id=? AND status='pending'",
+        (reason, listing_id),
+    )
+    if updated.rowcount != 1:
+        db().rollback()
+        abort(409, description="Объявление изменилось во время модерации.")
     resolve_listing_reports(listing_type, listing_id)
     db().commit()
     send_moderation_email(listing_type, item, "ZooLand: объявление требует доработки", "возвращено на доработку", reason,
@@ -3632,9 +4495,8 @@ def admin_delete_listing(listing_type, listing_id):
     reason = moderation_reason_from_form()
     send_moderation_email(listing_type, item, "ZooLand: объявление удалено", "удалено с ZooLand", reason)
     revision_photos = discard_listing_revision(listing_type, listing_id, item["photo"])
-    db().execute("DELETE FROM listing_daily_metrics WHERE listing_type=? AND listing_id=?", (listing_type, listing_id))
+    delete_listing_dependencies(listing_type, listing_id)
     db().execute(f"DELETE FROM {table} WHERE id=?", (listing_id,))
-    resolve_listing_reports(listing_type, listing_id)
     db().commit()
     delete_photos(item["photo"])
     delete_photos(revision_photos)
@@ -3660,14 +4522,28 @@ def admin_delete_user(user_id):
 def settings_profile():
     user = current_user()
     name = request.form.get("name", "").strip()
-    city = request.form.get("city", "").strip()
+    country_code, city, location_error = normalize_listing_location(
+        request.form, city_optional=True, default_country=user["country_code"] or "RU"
+    )
     gender = request.form.get("gender", "").strip()
     birth_date = request.form.get("birth_date", "").strip()
     about = request.form.get("about", "").strip()
     telegram_raw = request.form.get("telegram", "").strip()
     telegram = normalize_telegram(telegram_raw) if telegram_raw else None
-    if len(name) < 2:
-        flash("Имя должно быть не короче 2 символов.", "error")
+    if not 2 <= len(name) <= MAX_PROFILE_NAME_LENGTH:
+        flash(f"Имя должно содержать от 2 до {MAX_PROFILE_NAME_LENGTH} символов.", "error")
+        return redirect(url_for("settings"))
+    if location_error:
+        flash(location_error, "error")
+        return redirect(url_for("settings"))
+    if gender not in {"", "male", "female"}:
+        flash("Выберите корректное значение пола.", "error")
+        return redirect(url_for("settings"))
+    if birth_date and not valid_birth_date(birth_date):
+        flash("Укажите корректную дату рождения не позднее сегодняшнего дня.", "error")
+        return redirect(url_for("settings"))
+    if len(about) > MAX_PROFILE_ABOUT_LENGTH:
+        flash(f"Текст о себе не должен быть длиннее {MAX_PROFILE_ABOUT_LENGTH} символов.", "error")
         return redirect(url_for("settings"))
     if telegram_raw and not telegram:
         flash("Укажите Telegram в формате @username или https://t.me/username.", "error")
@@ -3688,8 +4564,8 @@ def settings_profile():
             except OSError:
                 pass
         avatar = filename
-    db().execute("UPDATE users SET name=?, city=?, gender=?, birth_date=?, about=?, avatar=?, telegram=? WHERE id=?",
-                 (name, city or None, gender or None, birth_date or None, about or None, avatar, telegram, user["id"]))
+    db().execute("UPDATE users SET name=?, country_code=?, city=?, gender=?, birth_date=?, about=?, avatar=?, telegram=? WHERE id=?",
+                 (name, country_code, city or None, gender or None, birth_date or None, about or None, avatar, telegram, user["id"]))
     db().commit()
     flash("Профиль обновлён.", "success")
     return redirect(url_for("settings"))
@@ -3709,7 +4585,8 @@ def settings_email():
         flash("Это уже ваш текущий email.", "error")
     else:
         secured_user = db().execute("SELECT id, email, password_hash FROM users WHERE id=?", (user["id"],)).fetchone()
-        if not check_password_hash(secured_user["password_hash"], current_password):
+        if (len(current_password) > MAX_PASSWORD_LENGTH or
+                not check_password_hash(secured_user["password_hash"], current_password)):
             flash("Введите текущий пароль, чтобы изменить email.", "error")
         elif not allow_sensitive_action("verify_resend", str(user["id"])):
             flash("Слишком много запросов кода. Попробуйте позже.", "error")
@@ -3742,9 +4619,14 @@ def verify_email_change():
             flash("Этот email уже занят другим аккаунтом.", "error")
         else:
             old_email = user["email"]
-            db().execute("UPDATE email_change_codes SET used_at=? WHERE id=?", (utcnow(), row["id"]))
-            db().execute("UPDATE users SET email=?, pending_email=NULL, email_verified=1, session_version=session_version+1 WHERE id=?", (row["new_email"], user["id"]))
-            db().commit()
+            try:
+                db().execute("UPDATE email_change_codes SET used_at=? WHERE id=?", (utcnow(), row["id"]))
+                db().execute("UPDATE users SET email=?, pending_email=NULL, email_verified=1, session_version=session_version+1 WHERE id=?", (row["new_email"], user["id"]))
+                db().commit()
+            except sqlite3.IntegrityError:
+                db().rollback()
+                flash("Этот email уже занят другим аккаунтом.", "error")
+                return redirect(url_for("settings"))
             updated_user = db().execute("SELECT id, session_version FROM users WHERE id=?", (user["id"],)).fetchone()
             establish_authenticated_session(updated_user)
             send_email(old_email, "ZooLand: email изменён", f"Email вашего аккаунта ZooLand изменён на {row['new_email']}. Если это были не вы, срочно обратитесь в поддержку.")
@@ -3757,17 +4639,36 @@ def verify_email_change():
 @login_required
 def settings_phone():
     user = current_user()
+    current_password = request.form.get("current_password", "")
     phone = normalize_international_phone(
         request.form.get("phone"),
         request.form.get("phone_country_custom") or request.form.get("phone_country"),
     )
-    if not phone:
+    secured_user = db().execute(
+        "SELECT password_hash FROM users WHERE id=?", (user["id"],)
+    ).fetchone()
+    if (len(current_password) > MAX_PASSWORD_LENGTH or not secured_user or
+            not check_password_hash(secured_user["password_hash"], current_password)):
+        flash("Введите текущий пароль, чтобы изменить номер.", "error")
+    elif not phone:
         flash("Укажите корректный международный номер телефона.", "error")
     elif db().execute("SELECT 1 FROM users WHERE phone=? AND id!=?", (phone, user["id"])).fetchone():
         flash("Этот номер уже привязан к другому аккаунту.", "error")
     else:
-        db().execute("UPDATE users SET phone=? WHERE id=?", (phone, user["id"])); db().commit()
-        flash("Номер телефона обновлён.", "success")
+        try:
+            db().execute("UPDATE users SET phone=? WHERE id=?", (phone, user["id"]))
+            db().commit()
+        except sqlite3.IntegrityError:
+            db().rollback()
+            flash("Этот номер уже привязан к другому аккаунту.", "error")
+        else:
+            send_email(
+                user["email"],
+                "ZooLand: номер телефона изменён",
+                "Номер телефона вашего аккаунта ZooLand изменён. "
+                "Если это были не вы, срочно смените пароль и обратитесь в поддержку.",
+            )
+            flash("Номер телефона обновлён.", "success")
     return redirect(url_for("settings"))
 
 
@@ -3778,9 +4679,9 @@ def settings_delete():
     secured_user = db().execute(
         "SELECT password_hash FROM users WHERE id=?", (user["id"],)
     ).fetchone()
-    if not secured_user or not check_password_hash(
-        secured_user["password_hash"], request.form.get("current_password", "")
-    ):
+    current_password = request.form.get("current_password", "")
+    if (len(current_password) > MAX_PASSWORD_LENGTH or not secured_user or
+            not check_password_hash(secured_user["password_hash"], current_password)):
         flash("Введите текущий пароль, чтобы удалить аккаунт.", "error")
         return redirect(url_for("settings"))
     delete_user_and_associated_data(user["id"])
@@ -3815,6 +4716,7 @@ def update_animal(animal_id):
     validation_errors = validate_animal_listing(data, current_phone=current_phone)
     if validation_errors:
         return animal_validation_redirect(validation_errors, animal_id=animal_id)
+    country_code, city, _location_error = normalize_listing_location(data)
     phone = current_phone if data.get("phone_source") == "current" else normalize_international_phone(data.get("contacts"), data.get("phone_country_custom") or data.get("phone_country"))
     photos = revision_values.get("photo", animal["photo"] or "") if revision else animal["photo"] or ""
     try:
@@ -3830,8 +4732,8 @@ def update_animal(animal_id):
     sex = data.get("sex", "") if data.get("sex", "") in ("male", "female") else None
     payload = {
         "type": data["type"], "breed": data["breed"].strip(), "age": nonnegative_int(data["age"]),
-        "price": nonnegative_int(data["price"]), "city": data["city"].strip(),
-        "description": data.get("description", ""), "contacts": phone, "photo": photos,
+        "price": nonnegative_int(data["price"]), "country_code": country_code, "city": city,
+        "description": data.get("description", "").strip(), "contacts": phone, "photo": photos,
         "deal_type": deal_type, "contact_methods": listing_contact_methods(data), "sex": sex,
         "birth_date": data.get("birth_date") or None,
         "vaccinated": checkbox_value(data, "vaccinated"), "vet_passport": checkbox_value(data, "vet_passport"),
@@ -3854,7 +4756,7 @@ def update_animal(animal_id):
         return redirect(url_for("account"))
     old_photo = animal["photo"] or ""
     db().execute(
-        """UPDATE animals SET type=?, breed=?, age=?, price=?, city=?, description=?, contacts=?, photo=?, deal_type=?,
+        """UPDATE animals SET type=?, breed=?, age=?, price=?, country_code=?, city=?, description=?, contacts=?, photo=?, deal_type=?,
                               contact_methods=?, sex=?, birth_date=?, vaccinated=?, vet_passport=?, pedigree=?, sterilized=?, delivery=?,
                               status='pending', moderation_reason=NULL, deal_status='open', outcome_at=NULL
              WHERE id=?""",
@@ -3904,7 +4806,7 @@ def reactivate(animal_id):
 def delete_animal(animal_id):
     animal = owned_animal(animal_id)
     revision_photos = discard_listing_revision("animal", animal_id, animal["photo"])
-    db().execute("DELETE FROM listing_daily_metrics WHERE listing_type='animal' AND listing_id=?", (animal_id,))
+    delete_listing_dependencies("animal", animal_id)
     db().execute("DELETE FROM animals WHERE id=?", (animal_id,)); db().commit()
     delete_photos(animal["photo"])
     delete_photos(revision_photos)
@@ -3925,7 +4827,9 @@ def accessories_list():
 
 def product_list(accessories):
     """Общий каталог для питания и аксессуаров."""
-    category, city, search = (request.args.get(key, "").strip() for key in ("category", "city", "q"))
+    category = bounded_query_value("category", 80)
+    country_code, city = bounded_location_query()
+    search = bounded_query_value("q", MAX_SAVED_SEARCH_QUERY_LENGTH)
     categories = ACCESSORY_TYPES if accessories else FOOD_TYPES
     query, conditions, params = "SELECT * FROM food", ["status='active'", PUBLIC_OUTCOME_SQL], []
     placeholders = ",".join("?" for _ in categories)
@@ -3934,6 +4838,9 @@ def product_list(accessories):
     if category in categories:
         conditions.append("category=?")
         params.append(category)
+    if country_code:
+        conditions.append("country_code=?")
+        params.append(country_code)
     if city:
         conditions.append("city=?")
         params.append(city)
@@ -3947,7 +4854,7 @@ def product_list(accessories):
     food = apply_promoted_listings(food, page_category, fixed_listing_type="food", city=city)
     category_ads = active_advertisements("category-banner", page_category, city=city)
     return render_template("food.html", food=food, cities=RUSSIAN_CITIES,
-                           selected_category=category, selected_city=city, search=search,
+                           selected_category=category, selected_country=country_code, selected_city=city, search=search,
                            catalog_categories=categories, accessories=accessories,
                            category_ads=category_ads)
 
@@ -3978,24 +4885,22 @@ def food_detail(food_id):
 def add_food():
     user = current_user()
     data = request.form
-    category = data.get("category", "")
-    title = data.get("title", "").strip()
-    if category not in PRODUCT_TYPES or len(title) < 3:
-        flash("Выберите категорию и укажите название не короче 3 символов.", "error")
+    values, errors = validate_catalog_listing(data, "food")
+    if errors:
+        flash("Не удалось опубликовать товар: " + " ".join(errors), "error")
         return redirect(url_for("food_list"))
     if not allow_sensitive_action("publish", str(user["id"])):
         flash("Слишком много новых объявлений. Попробуйте позже.", "error")
         return redirect(url_for("food_list"))
-    city = data.get("city", "").strip()
     try:
         filenames = save_photos(request.files.getlist("photos"))
     except ValueError as error:
         flash(str(error), "error")
         return redirect(url_for("food_list"))
     photos = ",".join(filenames)
-    db().execute("""INSERT INTO food (category, title, city, price, description, photo, contacts, telegram, user_id, status, created_at, expires_at, contact_methods)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
-                 (category, title, city, data.get("price", 0) or 0, data.get("description", ""), photos,
+    db().execute("""INSERT INTO food (category, title, country_code, city, price, description, photo, contacts, telegram, user_id, status, created_at, expires_at, contact_methods)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?)""",
+                 (values["category"], values["title"], values["country_code"], values["city"], values["price"], values["description"], photos,
                   user["phone"] or "", user["telegram"] or "", user["id"], utcnow(), iso_after_days(FREE_DAYS),
                   listing_contact_methods(data)))
     db().commit()
@@ -4010,7 +4915,7 @@ def delete_food(food_id):
     if not item:
         abort(404)
     revision_photos = discard_listing_revision("food", food_id, item["photo"])
-    db().execute("DELETE FROM listing_daily_metrics WHERE listing_type='food' AND listing_id=?", (food_id,))
+    delete_listing_dependencies("food", food_id)
     db().execute("DELETE FROM food WHERE id=?", (food_id,))
     db().commit()
     delete_photos(item["photo"])
@@ -4041,10 +4946,9 @@ def edit_food(food_id):
         abort(404)
     revision = get_listing_revision("food", food_id)
     if request.method == "POST":
-        title = request.form.get("title", "").strip()
-        category = request.form.get("category", "")
-        if category not in PRODUCT_TYPES or len(title) < 3:
-            flash("Выберите категорию и укажите название не короче 3 символов.", "error")
+        values, errors = validate_catalog_listing(request.form, "food")
+        if errors:
+            flash("Не удалось сохранить товар: " + " ".join(errors), "error")
             return redirect(url_for("edit_food", food_id=food_id))
         try:
             new_photos = save_photos(request.files.getlist("photos"))
@@ -4058,8 +4962,8 @@ def edit_food(food_id):
         refresh_profile_contacts = request.form.get("refresh_profile_contacts") == "1"
         profile_contacts = current_user()
         payload = {
-            "category": category, "title": title, "city": request.form.get("city", "").strip(),
-            "price": nonnegative_int(request.form.get("price", 0)), "description": request.form.get("description", ""),
+            "category": values["category"], "title": values["title"], "country_code": values["country_code"], "city": values["city"],
+            "price": values["price"], "description": values["description"],
             "photo": photos,
             "contacts": (profile_contacts["phone"] or "") if refresh_profile_contacts else revision_values.get("contacts", item["contacts"] or ""),
             "telegram": (profile_contacts["telegram"] or "") if refresh_profile_contacts else revision_values.get("telegram", item["telegram"] or ""),
@@ -4081,7 +4985,7 @@ def edit_food(food_id):
             return redirect(url_for("account"))
         old_photo = item["photo"] or ""
         db().execute(
-            """UPDATE food SET category=?, title=?, city=?, price=?, description=?, photo=?, contacts=?, telegram=?, contact_methods=?,
+            """UPDATE food SET category=?, title=?, country_code=?, city=?, price=?, description=?, photo=?, contacts=?, telegram=?, contact_methods=?,
                                status='pending', moderation_reason=NULL, deal_status='open', outcome_at=NULL
                  WHERE id=?""",
             (*[payload[field] for field in LISTING_REVISION_FIELDS["food"]], food_id),
@@ -4107,6 +5011,17 @@ def listing_owner(listing_type, listing_id):
     else:
         return None
     return row["user_id"] if row else None
+
+
+def listing_chat_state(listing_type, listing_id):
+    """Минимальное состояние карточки для безопасного открытия нового чата."""
+    if listing_type not in LISTING_TABLES:
+        return None
+    table = LISTING_TABLES[listing_type][0]
+    return db().execute(
+        f"SELECT user_id, status, COALESCE(deal_status, 'open') AS deal_status FROM {table} WHERE id=?",
+        (listing_id,),
+    ).fetchone()
 
 
 def listing_title(listing_type, listing_id):
@@ -4421,14 +5336,14 @@ def toggle_favorite(listing_type, listing_id):
         db().commit()
         if request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify(favorite=False)
-        return redirect(request.referrer or url_for("index"))
+        return redirect(local_referrer_or("index"))
     db().execute("INSERT INTO favorites (user_id, listing_type, listing_id, created_at) VALUES (?, ?, ?, ?)",
                  (user["id"], listing_type, listing_id, utcnow()))
     record_daily_metric(listing_type, listing_id, "favorite_added")
     db().commit()
     if request.headers.get("X-Requested-With") == "XMLHttpRequest":
         return jsonify(favorite=True)
-    return redirect(request.referrer or url_for("index"))
+    return redirect(local_referrer_or("index"))
 
 
 @app.route("/messages")
@@ -4457,9 +5372,11 @@ def messages_list():
                 "listing_type": row["listing_type"],
                 "listing_id": row["listing_id"],
                 "other_id": other_id,
-                "other_name": row["other_name"],
+                "other_name": mask_chat_profanity(row["other_name"]),
                 "other_avatar": row["other_avatar"],
-                "last_message": row["body"],
+                # Повторно фильтруем на чтении, чтобы старые сообщения,
+                # сохранённые до появления цензуры, тоже не показывались.
+                "last_message": mask_chat_profanity(row["body"]),
                 "last_time": row["created_at"],
             }
     state_rows = db().execute("""SELECT listing_type, listing_id, other_id, folder
@@ -4503,7 +5420,11 @@ def unread_notifications():
                       WHERE m.receiver_id=? AND m.read=0 AND COALESCE(state.folder, 'inbox')='inbox'"""
     row = db().execute("SELECT m.body, u.name " + unread_query + " ORDER BY m.id DESC LIMIT 1", (user["id"],)).fetchone()
     count = db().execute("SELECT COUNT(*) AS count " + unread_query, (user["id"],)).fetchone()["count"]
-    return jsonify(count=count, sender=row["name"] if row else "", body=row["body"] if row else "")
+    return jsonify(
+        count=count,
+        sender=mask_chat_profanity(row["name"]) if row else "",
+        body=mask_chat_profanity(row["body"]) if row else "",
+    )
 
 
 def requested_other_id():
@@ -4533,12 +5454,18 @@ def has_dialog_with(user_id, listing_type, listing_id, other_id):
 
 def resolve_dialog_other(user, listing_type, listing_id, candidate=None):
     """Не позволяет владельцу объявления случайно попасть в чужой диалог."""
-    owner_id = listing_owner(listing_type, listing_id)
+    listing = listing_chat_state(listing_type, listing_id)
+    owner_id = listing["user_id"] if listing else None
     if not owner_id:
         abort(404)
     if owner_id != user["id"]:
         if candidate is not None and candidate != owner_id:
             abort(403)
+        existing_dialog = has_dialog_with(user["id"], listing_type, listing_id, owner_id)
+        if not existing_dialog and (
+            listing["status"] != "active" or listing["deal_status"] in FINAL_OUTCOME_STATUSES
+        ):
+            abort(404)
         return owner_id
     if candidate is None:
         return None
@@ -4618,15 +5545,23 @@ def message_thread(listing_type, listing_id):
                   AND receiver_id=? AND sender_id=? AND read=0""",
                  (listing_type, listing_id, user["id"], other_id))
     db().commit()
-    messages = db().execute("""SELECT m.*, u.name AS sender_name, u.avatar AS sender_avatar
-                               FROM messages m JOIN users u ON u.id=m.sender_id
-                               WHERE m.listing_type=? AND m.listing_id=?
-                                 AND ((m.sender_id=? AND m.receiver_id=?) OR (m.sender_id=? AND m.receiver_id=?))
-                               ORDER BY m.id ASC""",
-                            (listing_type, listing_id, user["id"], other_id, other_id, user["id"])).fetchall()
+    message_rows = db().execute("""SELECT m.*, u.name AS sender_name, u.avatar AS sender_avatar
+                                   FROM messages m JOIN users u ON u.id=m.sender_id
+                                   WHERE m.listing_type=? AND m.listing_id=?
+                                     AND ((m.sender_id=? AND m.receiver_id=?) OR (m.sender_id=? AND m.receiver_id=?))
+                                   ORDER BY m.id ASC""",
+                                (listing_type, listing_id, user["id"], other_id, other_id, user["id"])).fetchall()
+    messages = []
+    for row in message_rows:
+        message = dict(row)
+        message["body"] = mask_chat_profanity(message["body"])
+        message["sender_name"] = mask_chat_profanity(message["sender_name"])
+        messages.append(message)
     other = db().execute("SELECT id, name, avatar FROM users WHERE id=?", (other_id,)).fetchone()
     if not other:
         abort(404)
+    other = dict(other)
+    other["name"] = mask_chat_profanity(other["name"])
     spam_blocked = dialog_is_blocked(other_id, listing_type, listing_id, user["id"])
     return render_template("thread.html", messages=messages, other=other,
                            listing_type=listing_type, listing_id=listing_id,
@@ -4656,6 +5591,7 @@ def send_message(listing_type, listing_id):
     if dialog_is_blocked(receiver_id, listing_type, listing_id, user["id"]):
         flash("Диалог находится в спаме — собеседник больше не принимает сообщения.", "error")
         return redirect(url_for("message_thread", listing_type=listing_type, listing_id=listing_id, other_id=receiver_id))
+    body = mask_chat_profanity(body)
     db().execute("INSERT INTO messages (listing_type, listing_id, sender_id, receiver_id, body, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                  (listing_type, listing_id, user["id"], receiver_id, body, utcnow()))
     # Если диалог ранее был удалён, новое сообщение возвращает его во входящие
@@ -4670,9 +5606,24 @@ def send_message(listing_type, listing_id):
     return redirect(url_for("message_thread", listing_type=listing_type, listing_id=listing_id, other_id=receiver_id))
 
 
-init_db()
+@app.cli.command("init-db")
+def init_db_command():
+    """Создаёт или обновляет схему одним процессом до запуска Gunicorn."""
+    init_db()
+    click.echo(f"Схема ZooLand готова: {DB_NAME}")
+
+
+@app.cli.command("process-notifications")
+@click.option("--max-jobs", default=10, type=click.IntRange(1, 100), show_default=True)
+def process_notifications_command(max_jobs):
+    """Отправляет очередь email сохранённых поисков вне web-worker."""
+    completed, retrying = process_saved_search_jobs(max_jobs)
+    click.echo(f"Задачи рассылки: готово {completed}, оставлено для повтора {retrying}.")
+
+
 if __name__ == "__main__":
     # Для production используйте Gunicorn из wsgi.py. Debug нельзя включать в production.
+    init_db()
     app.run(
         debug=env_flag("ZOOLAND_DEBUG") and not IS_PRODUCTION,
         host=os.environ.get("ZOOLAND_HOST", "127.0.0.1"),

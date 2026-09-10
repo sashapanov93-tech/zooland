@@ -5,9 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Сообщения — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -33,7 +30,7 @@
             <a href="{{ url_for('messages_list', folder='deleted') }}" class="{% if folder == 'deleted' %}active{% endif %}">Удалённые · {{ counts.deleted }}</a>
         </nav>
     </section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <section class="account-section">
         <div class="account-list">
             {% for dialog in dialogs %}
@@ -41,7 +38,7 @@
                 <a class="dialog-main" href="{{ url_for('message_thread', listing_type=dialog.listing_type, listing_id=dialog.listing_id, other_id=dialog.other_id) }}">
                     <div class="dialog-avatar">
                         {% if dialog.other_avatar %}
-                        <img src="{{ url_for('static', filename='uploads/' + dialog.other_avatar) }}" alt="">
+                        <img src="{{ url_for('uploaded_file', filename=dialog.other_avatar) }}" alt="">
                         {% else %}
                         <span>{{ dialog.other_name[:1]|upper }}</span>
                         {% endif %}
@@ -105,7 +102,7 @@
                     <input type="hidden" name="from_folder" value="deleted">
                     <button type="submit" title="Вернуть во входящие">↩</button>
                 </form>
-                <form method="post" action="{{ url_for('delete_dialog', listing_type=dialog.listing_type, listing_id=dialog.listing_id, other_id=dialog.other_id) }}" class="dialog-action" onsubmit="return confirm('Удалить диалог навсегда?');">
+                <form method="post" action="{{ url_for('delete_dialog', listing_type=dialog.listing_type, listing_id=dialog.listing_id, other_id=dialog.other_id) }}" class="dialog-action" data-confirm="Удалить диалог навсегда?">
                     <input type="hidden" name="other_id" value="{{ dialog.other_id }}">
                     <button type="submit" title="Удалить навсегда">❌</button>
                 </form>

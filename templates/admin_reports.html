@@ -10,7 +10,7 @@
 <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><div class="account-actions"><a class="back-link" href="{{ url_for('admin_moderation') }}">Модерация</a><a class="back-link" href="{{ url_for('admin_users') }}">Пользователи</a></div></div></header>
 <main class="account-page">
     <section class="account-hero"><p class="eyebrow">Администрирование</p><h1>Жалобы · {{ reports|length }}</h1><p>Проверьте объявление и выберите решение. При возврате или удалении владелец получит письмо с указанной причиной.</p></section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <section class="account-section"><div class="account-list report-list">
         {% for report in reports %}
         <article class="account-item report-item">
@@ -28,7 +28,7 @@
                     <label>Причина для владельца<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label>
                     <button class="revision-link" type="submit">Вернуть на доработку</button>
                 </form>
-                <form class="moderation-decision delete-decision" method="post" action="{{ url_for('admin_delete_listing', listing_type=report.listing_type, listing_id=report.listing_id) }}" onsubmit="return confirm('Удалить объявление безвозвратно? Владельцу будет отправлена причина.');">
+                <form class="moderation-decision delete-decision" method="post" action="{{ url_for('admin_delete_listing', listing_type=report.listing_type, listing_id=report.listing_id) }}" data-confirm="Удалить объявление безвозвратно? Владельцу будет отправлена причина.">
                     <input type="hidden" name="return_to" value="reports">
                     <label>Причина удаления<select name="reason">{% for reason in moderation_reasons %}<option value="{{ reason }}">{{ reason }}</option>{% endfor %}</select></label>
                     <button class="danger" type="submit">Удалить объявление</button>

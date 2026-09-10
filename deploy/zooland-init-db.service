@@ -1,0 +1,39 @@
+[Unit]
+Description=ZooLand one-shot database schema initialization
+After=local-fs.target
+RequiresMountsFor=/var/lib/zooland
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=zooland
+Group=zooland
+WorkingDirectory=/opt/zooland/current
+EnvironmentFile=/etc/zooland/zooland.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+StateDirectory=zooland
+StateDirectoryMode=0710
+
+ExecStart=/opt/zooland/venv/bin/python -m flask --app app init-db
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=zooland-init-db
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectHostname=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/zooland

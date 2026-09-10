@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Приложение на смартфон — ZooLand</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a>
+        <div class="account-actions">
+            {% if account_user %}<a class="account-link" href="{{ url_for('account') }}">Личный кабинет</a>{% else %}<a class="account-link" href="{{ url_for('login') }}">Войти</a>{% endif %}
+            <a class="back-link" href="{{ url_for('index') }}">← На главную</a>
+        </div>
+    </div>
+</header>
+
+<main class="account-page smartphone-app-page">
+    {% if account_user %}{% include "_account_tabs.html" %}{% endif %}
+
+    <section class="smartphone-app-hero" aria-labelledby="smartphone-app-title">
+        <div class="smartphone-app-copy">
+            <p class="eyebrow">ZooLand на смартфоне</p>
+            <span class="smartphone-app-status"><span aria-hidden="true"></span>Скоро</span>
+            <h1 id="smartphone-app-title">Приложение на смартфон</h1>
+            <p>Мы готовим мобильное приложение ZooLand. Когда оно будет доступно, официальные ссылки на установку появятся на этой странице.</p>
+            <a class="publish-button" href="{{ url_for('index') }}">Открыть ZooLand в браузере</a>
+        </div>
+
+        <figure class="smartphone-app-visual">
+            <img src="{{ url_for('static', filename='smartphone-app-dog.webp') }}"
+                 alt="Бежево-коричневая собака показывает приложение ZooLand на смартфоне"
+                 width="1800"
+                 height="1005"
+                 decoding="async"
+                 fetchpriority="high">
+        </figure>
+    </section>
+
+    <section class="smartphone-app-features" aria-labelledby="smartphone-app-features-title">
+        <div class="smartphone-app-section-heading">
+            <p class="eyebrow">Уже доступно</p>
+            <h2 id="smartphone-app-features-title">ZooLand удобно работает в мобильном браузере</h2>
+            <p>Пока приложение готовится, пользуйтесь адаптивной версией сайта без установки.</p>
+        </div>
+        <div class="smartphone-app-feature-grid">
+            <article><span aria-hidden="true">⌕</span><h3>Ищите объявления</h3><p>Находите питомцев, услуги, питание и аксессуары со смартфона.</p></article>
+            <article><span aria-hidden="true">♡</span><h3>Сохраняйте избранное</h3><p>После входа нужные объявления всегда остаются под рукой.</p></article>
+            <article><span aria-hidden="true">✉</span><h3>Общайтесь с владельцами</h3><p>Открывайте сообщения и продолжайте диалоги прямо в браузере.</p></article>
+        </div>
+    </section>
+
+    <section class="smartphone-app-notice">
+        <div>
+            <p class="eyebrow">Безопасная установка</p>
+            <h2>Скачивайте приложение только по официальной ссылке</h2>
+        </div>
+        <p>Не устанавливайте файлы ZooLand из сторонних источников. После выпуска проверенные ссылки для Android и iPhone появятся именно здесь.</p>
+    </section>
+</main>
+
+{% include "_footer.html" %}
+<script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>

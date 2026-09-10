@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Настройки — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -26,7 +24,7 @@
         <h1>Настройки клиента</h1>
         <p>Управляйте данными профиля, контактами и параметрами аккаунта.</p>
     </section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
 
     <section class="account-section settings-section">
         <h2>Профиль</h2>
@@ -35,7 +33,7 @@
                 <div class="avatar-block">
                     <div class="avatar-preview" id="avatar-preview">
                         {% if account_user.avatar %}
-                        <img src="{{ url_for('static', filename='uploads/' ~ account_user.avatar) }}" alt="Аватар">
+                        <img src="{{ url_for('uploaded_file', filename=account_user.avatar) }}" alt="Аватар">
                         {% else %}
                         <span class="avatar-placeholder">{{ account_user.name[:1]|upper }}</span>
                         {% endif %}
@@ -47,13 +45,8 @@
                         <span class="avatar-upload-hint" id="avatar-upload-hint">После выбора настройте область — аватар сохранится автоматически.</span>
                     </div>
                 </div>
-                <label>Имя<input name="name" value="{{ account_user.name }}" required minlength="2"></label>
-                <label>Город
-                    <input name="city" value="{{ account_user.city or '' }}" list="city-list" placeholder="Ваш город">
-                    <datalist id="city-list">
-                        {% for city in russian_cities %}<option value="{{ city }}">{% endfor %}
-                    </datalist>
-                </label>
+                <label>Имя<input name="name" value="{{ account_user.name }}" required minlength="2" maxlength="80"></label>
+                <div class="settings-location-field"><span>Страна и город</span>{{ location_picker('profile-location', account_user.country_code|default('RU', true), account_user.city) }}</div>
                 <label>Пол
                     <select name="gender">
                         <option value="">Не указан</option>
@@ -62,8 +55,8 @@
                     </select>
                 </label>
                 <label>Дата рождения<input name="birth_date" type="date" value="{{ account_user.birth_date or '' }}"></label>
-                <label>Telegram для связи<input name="telegram" value="{{ account_user.telegram or '' }}" placeholder="@username или https://t.me/username"></label>
-                <label class="full-row">О себе<textarea name="about" rows="3" placeholder="Расскажите немного о себе">{{ account_user.about or '' }}</textarea></label>
+                <label>Telegram для связи<input name="telegram" value="{{ account_user.telegram or '' }}" maxlength="64" placeholder="@username или https://t.me/username"></label>
+                <label class="full-row">О себе<textarea name="about" rows="3" maxlength="1000" placeholder="Расскажите немного о себе">{{ account_user.about or '' }}</textarea></label>
                 <button type="submit" class="settings-save">Сохранить профиль</button>
             </form>
         </div>
@@ -100,18 +93,19 @@
         <h2>Контакты</h2>
         <div class="settings-card settings-contacts">
             <form method="post" action="{{ url_for('settings_email') }}" class="settings-inline-form">
-                <label>Новый email<input name="email" type="email" value="{{ account_user.email }}" required autocomplete="email"></label>
-                <label>Текущий пароль<input name="current_password" type="password" required autocomplete="current-password"></label>
+                <label>Новый email<input name="email" type="email" value="{{ account_user.email }}" maxlength="254" required autocomplete="email"></label>
+                <label>Текущий пароль<input name="current_password" type="password" maxlength="128" required autocomplete="current-password"></label>
                 <button type="submit" class="settings-save">Отправить код</button>
             </form>
             <form method="post" action="{{ url_for('settings_phone') }}" class="settings-inline-form">
                 <label>Страна и код<select name="phone_country" required>{% for country, code in country_codes %}<option value="{{ code }}" {% if account_user.phone and account_user.phone.startswith(code) %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна — свой код ниже</option></select></label>
-                <label>Код другой страны<input name="phone_country_custom" type="tel" placeholder="Например, +351"></label>
-                <label>Номер телефона<input name="phone" type="tel" value="{{ account_user.phone or '' }}" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>
+                <label>Код другой страны<input name="phone_country_custom" type="tel" maxlength="8" placeholder="Например, +351"></label>
+                <label>Номер телефона<input name="phone" type="tel" value="{{ account_user.phone or '' }}" maxlength="32" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>
+                <label>Текущий пароль<input name="current_password" type="password" maxlength="128" required autocomplete="current-password"></label>
                 <button type="submit" class="settings-save">Обновить</button>
             </form>
         </div>
-        <p class="muted settings-hint">Для смены email нужен текущий пароль, затем код с нового адреса. Телефон используется для контактов в объявлениях.</p>
+        <p class="muted settings-hint">Для смены email нужен текущий пароль, затем код с нового адреса. Смена телефона тоже защищена текущим паролем.</p>
         {% if pending_email_change %}<p class="muted settings-hint">Ожидается подтверждение адреса {{ pending_email_change.new_email }}. <a href="{{ url_for('verify_email_change') }}">Ввести код</a></p>{% endif %}
     </section>
 
@@ -120,8 +114,8 @@
         <div class="settings-card danger-zone">
             <p>Удаление аккаунта безвозвратно удалит профиль, объявления и фотографии, переписки, избранное, жалобы, сохранённые поиски и данные для входа.</p>
             <p class="muted">Для защиты аккаунта подтвердите действие текущим паролем. Восстановить удалённые данные нельзя.</p>
-            <form method="post" action="{{ url_for('settings_delete') }}" class="settings-inline-form" onsubmit="return confirm('Вы уверены? Это действие нельзя отменить.');">
-                <label>Текущий пароль<input name="current_password" type="password" autocomplete="current-password" required></label>
+            <form method="post" action="{{ url_for('settings_delete') }}" class="settings-inline-form" data-confirm="Вы уверены? Это действие нельзя отменить.">
+                <label>Текущий пароль<input name="current_password" type="password" maxlength="128" autocomplete="current-password" required></label>
                 <button type="submit" class="danger-button">Удалить аккаунт</button>
             </form>
         </div>

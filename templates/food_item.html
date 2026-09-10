@@ -1,3 +1,4 @@
+{% from "_location.html" import location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{{ item.title }} — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 {% set outcome = item.deal_status or 'open' %}
@@ -17,13 +15,13 @@
     <article class="detail-card">
         <div class="detail-media">
             {% set photos = item.photo.split(',') if item.photo else [] %}
-            {% if photos %}<div class="gallery"><img class="gallery-main" src="{{ url_for('static', filename='uploads/' + photos[0]) }}" alt="{{ item.title }}">{% if photos|length > 1 %}<div class="gallery-thumbs">{% for photo in photos %}<img src="{{ url_for('static', filename='uploads/' + photo) }}" alt="" class="gallery-thumb {% if loop.first %}active{% endif %}" onclick="this.parentElement.parentElement.querySelector('.gallery-main').src=this.src;this.parentElement.querySelectorAll('.gallery-thumb').forEach(t=>t.classList.remove('active'));this.classList.add('active');">{% endfor %}</div>{% endif %}</div>{% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🦴</div>{% endif %}
+            {% if photos %}<div class="gallery"><img class="gallery-main" src="{{ url_for('uploaded_file', filename=photos[0]) }}" alt="{{ item.title }}">{% if photos|length > 1 %}<div class="gallery-thumbs">{% for photo in photos %}<img src="{{ url_for('uploaded_file', filename=photo) }}" alt="" class="gallery-thumb {% if loop.first %}active{% endif %}" role="button" tabindex="0">{% endfor %}</div>{% endif %}</div>{% else %}<div class="card-placeholder detail-placeholder" aria-hidden="true">🦴</div>{% endif %}
         </div>
         <div class="detail-body">
             <p class="eyebrow">{{ item.category }}</p>
             <div class="detail-title-row"><h1>{{ item.title }}</h1><span class="listing-status-pill status-{{ outcome }}">{{ outcome_status_labels.get(outcome, 'Активно') }}</span></div>
             {% if item.price %}<p class="detail-price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% else %}<p class="detail-price detail-price-negotiable">По договорённости</p>{% endif %}
-            <p class="detail-meta">{{ item.city or 'Город не указан' }}</p>
+            <p class="detail-meta">{{ location_text(item.country_code, item.city) }}</p>
             <p class="detail-meta">Опубликовано {{ item.created_at|publication_date }}</p>
             <p class="detail-views">👁 {{ views_today }} за сутки · {{ views_total }} всего</p>
 
@@ -73,9 +71,6 @@
     </article>
 </main>
 {% include "_footer.html" %}
-<script>
-document.querySelectorAll('.reveal-call').forEach(function(button) { button.addEventListener('click', function() { var phone = document.querySelector('.reveal-phone'); if (!phone || !phone.dataset.phone) return; var number = phone.dataset.phone; phone.textContent = number; phone.classList.add('revealed'); var link = document.createElement('a'); link.className = 'contact-link detail-call revealed-call'; link.href = 'tel:' + number.replace(/[^+\d]/g, ''); link.textContent = 'Позвонить'; link.dataset.listingMetric = 'phone_click'; link.dataset.listingType = 'food'; link.dataset.listingId = '{{ item.id }}'; button.replaceWith(link); }); });
-</script>
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>

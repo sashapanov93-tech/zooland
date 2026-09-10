@@ -1,3 +1,4 @@
+{% from "_location.html" import location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Личный кабинет — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -32,7 +30,7 @@
         </div>
     </section>
 
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
 
     <section class="account-metrics" aria-label="Статистика активных объявлений">
         <article class="account-metric"><span class="account-metric-label">Активные</span><strong>{{ active|length }}</strong><small>в каталоге</small></article>
@@ -51,7 +49,7 @@
                 <article class="account-item listing-item listing-item-pending">
                     <div class="listing-summary">
                         <div class="listing-title-row"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><span class="listing-status-pill status-pending">На модерации</span></div>
-                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <p>{{ location_text(item.country_code, item.city) }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
                         <small>Отправлено {{ item.created_at|publication_date }} · не видно другим пользователям до одобрения</small>
                     </div>
                     <div class="item-actions item-actions-compact">
@@ -73,7 +71,7 @@
                             <strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }} · {{ deal_type_labels.get(item.deal_type, 'Продам') }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong>
                             <span class="listing-status-pill status-{{ deal_status }}">{{ outcome_status_labels.get(deal_status, 'Активно') }}</span>
                         </div>
-                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <p>{{ location_text(item.country_code, item.city) }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
                         <small>Опубликовано {{ item.created_at|publication_date }}{% if item.expires_at %} · до {{ item.expires_at|publication_date }}{% endif %}</small>
 
                         {% if item.revision_status %}
@@ -127,7 +125,7 @@
                 <article class="account-item revision-item">
                     <div class="listing-summary">
                         <strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong>
-                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <p>{{ location_text(item.country_code, item.city) }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
                         <small>Отправлено {{ item.created_at|publication_date }}</small>
                         <p class="revision-reason"><b>Причина:</b> {{ item.moderation_reason or 'Требуется проверить и уточнить информацию в объявлении.' }}</p>
                     </div>
@@ -149,7 +147,7 @@
                 <article class="account-item listing-item completed-item outcome-{{ deal_status }}">
                     <div class="listing-summary">
                         <div class="listing-title-row"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><span class="listing-status-pill status-{{ deal_status }}">{{ outcome_status_labels.get(deal_status, 'Сделка завершена') }}</span></div>
-                        <p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
+                        <p>{{ location_text(item.country_code, item.city) }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p>
                         <small>Завершено {{ (item.outcome_at or item.created_at)|publication_date }} · объявление скрыто из поиска</small>
                     </div>
                     <div class="item-actions item-actions-compact">
@@ -166,7 +164,7 @@
             <div class="account-list">
                 {% for item in archived %}
                 <article class="account-item listing-item archived-item">
-                    <div class="listing-summary"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><p>{{ item.city or 'Город не указан' }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p><small>Опубликовано {{ item.created_at|publication_date }} · публикация завершена</small></div>
+                    <div class="listing-summary"><strong>{% if item.listing_type == 'animal' %}{{ item.type }} · {{ item.listing_title }}{% elif item.listing_type == 'service' %}Услуга · {{ item.listing_title }}{% else %}Товар · {{ item.listing_title }}{% endif %}</strong><p>{{ location_text(item.country_code, item.city) }} · {% if item.price %}{{ item.price }} ₽{% else %}По договорённости{% endif %}</p><small>Опубликовано {{ item.created_at|publication_date }} · публикация завершена</small></div>
                     <div class="item-actions item-actions-compact">
                         {% if item.listing_type == 'animal' %}<form action="{{ url_for('reactivate', animal_id=item.id) }}" method="post"><button class="reactivate">Опубликовать снова</button></form><a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>
                         {% elif item.listing_type == 'service' %}<form action="{{ url_for('renew_service', service_id=item.id) }}" method="post"><button class="reactivate">Опубликовать снова</button></form><a href="{{ url_for('edit_service', service_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_service', service_id=item.id) }}" method="post"><button class="danger">Удалить</button></form>

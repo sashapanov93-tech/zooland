@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker, location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{% if accessories %}Аксессуары{% else %}Зоопитание{% endif %} — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -31,12 +29,12 @@
             <p class="hero-copy">{% if accessories %}Амуниция, переноски, лежанки, игрушки, уход и другие аксессуары. Размещение бесплатно.{% else %}Корма, лакомства, наполнители и другие товары для питомцев. Размещение бесплатно.{% endif %}</p>
         </div>
     </section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
 
     <section class="search-panel" aria-label="Поиск">
         <form method="get" class="search-form">
             <label class="search-field"><span class="sr-only">Поиск</span><input type="search" name="q" value="{{ search }}" placeholder="Название товара или описание"></label>
-            <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
+            {{ location_picker('products-search', selected_country|default(''), selected_city, true) }}
             <select name="category" aria-label="Категория">
                 <option value="">Все категории</option>
                 {% for category in catalog_categories %}<option value="{{ category }}" {% if selected_category == category %}selected{% endif %}>{{ category }}</option>{% endfor %}
@@ -57,7 +55,7 @@
                 <optgroup label="Аксессуары">{% for category in accessory_types %}<option value="{{ category }}">{{ category }}</option>{% endfor %}</optgroup>
             </select>
             <input type="text" name="title" placeholder="Название (например, Корм Acana для собак)" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('products-publish', account_user.country_code|default('RU', true)) }}
             <input type="number" name="price" placeholder="Цена, ₽ (необязательно)">
             <textarea name="description" placeholder="Описание: состав, вес, состояние, условия передачи"></textarea>
             <label class="file-input">Фото — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
@@ -80,14 +78,14 @@
                 {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
                 <a class="card-link" href="{{ url_for('advertising_click', request_id=item.advertising_id) if item.advertising_id else url_for('food_detail', food_id=item.id) }}"{% if item.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
                 {% endif %}
                 <div class="card-body">
                     <div class="card-topline"><span>{{ item.category }}</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
                     <h3>{{ item.title }}</h3>
                     {% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}
-                    <p class="meta">{{ item.city or 'Город не указан' }}</p>
+                    <p class="meta">{{ location_text(item.country_code, item.city) }}</p>
                     <p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p>
                     <p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p>
                     <span class="card-more">Подробнее →</span>
@@ -103,7 +101,6 @@
         </div>
     </section>
 </main>
-<datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist>
 {% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

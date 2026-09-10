@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker, location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Услуги для животных — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -31,12 +29,12 @@
             <p class="hero-copy">Профессиональные услуги для ваших животных. Размещение и продление бесплатны.</p>
         </div>
     </section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
 
     <section class="search-panel" aria-label="Поиск услуг">
         <form method="get" class="search-form">
             <label class="search-field"><span class="sr-only">Поиск</span><input type="search" name="q" value="{{ search }}" placeholder="Название услуги или описание"></label>
-            <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
+            {{ location_picker('services-search', selected_country|default(''), selected_city, true) }}
             <select name="type" aria-label="Тип услуги">
                 <option value="">Все услуги</option>
                 {% for st in service_types %}<option value="{{ st }}" {% if selected_type == st %}selected{% endif %}>{{ st }}</option>{% endfor %}
@@ -56,7 +54,7 @@
                 {% for st in service_types %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
             </select>
             <input type="text" name="title" placeholder="Название (например, Груминг кошек)" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('services-publish', account_user.country_code|default('RU', true)) }}
             <input type="number" name="price" placeholder="Цена услуги, ₽ (необязательно)">
             <div class="pet-types">
                 <span class="pet-types-label">С какими животными работаете:</span>
@@ -85,14 +83,14 @@
                 {% set methods = (service.contact_methods or 'phone,chat,telegram').split(',') %}
                 <a class="card-link" href="{{ url_for('advertising_click', request_id=service.advertising_id) if service.advertising_id else url_for('service_detail', service_id=service.id) }}"{% if service.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if service.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + service.photo.split(',')[0]) }}" alt="{{ service.title }}">
+                <img src="{{ url_for('uploaded_file', filename=service.photo.split(',')[0]) }}" alt="{{ service.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">✂️</div>
                 {% endif %}
                 <div class="card-body">
                     <div class="card-topline"><span>{{ service.type }}</span></div>{% if service.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
                     <h3>{{ service.title }}</h3>
                     {% if service.price %}<p class="price">{{ '{:,.0f}'.format(service.price).replace(',', ' ') }} ₽</p>{% endif %}
-                    <p class="meta">{{ service.city or 'Город не указан' }} <span>•</span> {{ service.pet_types }}</p>
+                    <p class="meta">{{ location_text(service.country_code, service.city) }} <span>•</span> {{ service.pet_types }}</p>
                     <p class="publication-date">Опубликовано {{ service.created_at|publication_date }}</p>
                     <p class="description">{{ service.description or 'Подробнее на странице услуги.' }}</p>
                     <span class="card-more">Подробнее →</span>
@@ -108,7 +106,6 @@
         </div>
     </section>
 </main>
-<datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist>
 {% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>

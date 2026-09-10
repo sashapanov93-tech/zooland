@@ -181,7 +181,8 @@ def sanitize_upload(
     """Validate and publish an uploaded image as a new, metadata-free WebP.
 
     ``upload`` can be Flask/Werkzeug's ``FileStorage`` or a binary stream.
-    ``destination_dir`` must be the directory where static upload files belong.
+    ``destination_dir`` must be the private application data directory used for
+    public upload files.
     The returned value is only a generated filename, not an untrusted path.
     A temporary file is atomically replaced into place only after Pillow has
     successfully completed encoding.
@@ -195,7 +196,7 @@ def sanitize_upload(
 
     destination = Path(destination_dir)
     try:
-        destination.mkdir(parents=True, exist_ok=True)
+        destination.mkdir(mode=0o750, parents=True, exist_ok=True)
     except OSError as exc:
         raise ImageSafetyError("Не удалось подготовить хранилище изображений.") from exc
 
@@ -220,6 +221,9 @@ def sanitize_upload(
             )
             temporary.flush()
             os.fsync(temporary.fileno())
+        # Gunicorn writes the file; Nginx may read it through a dedicated shared
+        # group.  No write bit is granted to the web server or other users.
+        os.chmod(temporary_name, 0o640)
         os.replace(temporary_name, target)
         temporary_name = None
         return filename

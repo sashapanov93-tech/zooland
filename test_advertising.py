@@ -18,8 +18,12 @@ os.environ["ZOOLAND_REQUIRE_ANTIVIRUS"] = "0"
 import app as zooland
 
 
+zooland.init_db()
+
+
 class AdvertisingPublicationTests(unittest.TestCase):
     def setUp(self):
+        zooland._next_housekeeping_at = 0.0
         zooland._request_log.clear()
         zooland._ban_count.clear()
         zooland._banned_until.clear()
@@ -1158,9 +1162,42 @@ class AdvertisingPublicationTests(unittest.TestCase):
         self.assertTrue(zooland.advertising_date_is_valid("2026-01-02"))
 
     def test_representative_public_routes_still_render(self):
-        for path in ("/", "/services", "/food", "/accessories", "/advertising", "/login", "/vacancies"):
+        for path in ("/", "/services", "/food", "/accessories", "/advertising", "/login", "/vacancies", "/smartphone-app"):
             with self.subTest(path=path):
                 self.assertEqual(self.client.get(path).status_code, 200)
+
+    def test_smartphone_app_page_is_public_linked_and_active_for_users(self):
+        response = self.client.get("/smartphone-app")
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn("<title>Приложение на смартфон — ZooLand</title>", html)
+        self.assertIn('id="smartphone-app-title">Приложение на смартфон</h1>', html)
+        self.assertIn('name="viewport"', html)
+        self.assertIn('src="/static/smartphone-app-dog.webp"', html)
+        self.assertIn(
+            'alt="Бежево-коричневая собака показывает приложение ZooLand на смартфоне"',
+            html,
+        )
+        self.assertIn('href="/"', html)
+        self.assertNotIn('aria-current="page">Приложение на смартфон', html)
+
+        image_response = self.client.get("/static/smartphone-app-dog.webp")
+        self.assertEqual(image_response.status_code, 200)
+        self.assertEqual(image_response.mimetype, "image/webp")
+        image_response.close()
+
+        for path in ("/", "/services", "/vacancies"):
+            with self.subTest(footer_path=path):
+                page = self.client.get(path).get_data(as_text=True)
+                self.assertIn('href="/smartphone-app">Приложение на смартфон</a>', page)
+
+        user_id = self.create_user(email="mobile-user@example.com", name="Мобильный пользователь")
+        self.login_as(user_id)
+        account_html = self.client.get("/smartphone-app").get_data(as_text=True)
+        self.assertIn(
+            'class="account-tab-wide-mobile active" aria-current="page">Приложение на смартфон</a>',
+            account_html,
+        )
 
 
 if __name__ == "__main__":

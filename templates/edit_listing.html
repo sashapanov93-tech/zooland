@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -23,18 +24,18 @@
         <p>После сохранения изменения проходят повторную модерацию. До решения модератора в каталоге остаётся текущая опубликованная версия.</p>
         {% endif %}
     </div>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <form class="add-form edit-form" method="post" enctype="multipart/form-data">
         {% if listing_type == 'service' %}
         <select name="type" required>{% for value in service_types %}<option value="{{ value }}" {% if item.type == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
         <input name="title" value="{{ item.title }}" required placeholder="Название услуги">
-        <input name="city" value="{{ item.city or '' }}" list="cities" required placeholder="Город">
+        {{ location_picker('listing-edit', item.country_code|default('RU', true), item.city) }}
         <input type="number" name="price" value="{{ item.price or 0 }}" min="0" placeholder="Цена">
         <div class="pet-types"><span class="pet-types-label">С какими животными работаете:</span><div class="pet-types-grid">{% for pet in pet_types %}<label class="pet-check"><input type="checkbox" name="pet_types" value="{{ pet }}" {% if pet in (item.pet_types or '').split(',') %}checked{% endif %}><span>{{ pet }}</span></label>{% endfor %}</div></div>
         {% else %}
         <select name="category" required>{% for value in food_types + accessory_types %}<option value="{{ value }}" {% if item.category == value %}selected{% endif %}>{{ value }}</option>{% endfor %}</select>
         <input name="title" value="{{ item.title }}" required placeholder="Название">
-        <input name="city" value="{{ item.city or '' }}" list="cities" required placeholder="Город">
+        {{ location_picker('listing-edit', item.country_code|default('RU', true), item.city) }}
         <input type="number" name="price" value="{{ item.price or 0 }}" min="0" placeholder="Цена">
         {% endif %}
         <textarea name="description" placeholder="Описание">{{ item.description or '' }}</textarea>
@@ -50,7 +51,6 @@
         <label class="file-input">Заменить фото (JPG, PNG или WEBP; до 10 шт, до 5 МБ каждое)<input type="file" name="photos" accept="image/png,image/jpeg,image/webp" multiple></label>
         <button type="submit">{% if revision and revision.status == 'pending' %}Обновить версию на модерации{% elif revision and revision.status == 'rejected' or item.status == 'rejected' %}Исправить и отправить на модерацию{% else %}Сохранить и отправить на модерацию{% endif %}</button>
     </form>
-    <datalist id="cities">{% for city in russian_cities %}<option value="{{ city }}">{% endfor %}</datalist>
 </main>
 {% include "_footer.html" %}
 <script src="{{ url_for('static', filename='script.js') }}"></script>

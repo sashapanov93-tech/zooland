@@ -1,0 +1,12 @@
+[Unit]
+Description=Run ZooLand notification queue worker every minute
+
+[Timer]
+OnCalendar=*-*-* *:*:00
+AccuracySec=1s
+RandomizedDelaySec=10s
+Persistent=true
+Unit=zooland-notifications.service
+
+[Install]
+WantedBy=timers.target

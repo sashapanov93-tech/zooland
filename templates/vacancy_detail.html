@@ -6,7 +6,7 @@
 <main class="vacancy-page">
     <article class="vacancy-description"><p class="eyebrow">{{ vacancy.department }}</p><h1>{{ vacancy.title }}</h1><p class="vacancy-lead">{{ vacancy.summary }}</p><div class="vacancy-meta"><span>{{ vacancy.format }}</span><span>{{ vacancy.schedule }}</span><span>{{ vacancy.salary }}</span></div><h2>Что предстоит делать</h2><ul>{% for item in vacancy.responsibilities %}<li>{{ item }}</li>{% endfor %}</ul><h2>Что важно</h2><ul>{% for item in vacancy.requirements %}<li>{{ item }}</li>{% endfor %}</ul></article>
     <section class="application-card" id="apply"><p class="eyebrow">Откликнуться</p><h2>Расскажите о себе</h2>
-        {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+        {% with messages=get_flashed_messages(with_categories=true) %}{% for category,message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
         <form method="post" class="application-form">
             <label>Имя<input name="name" maxlength="80" value="{{ request.form.get('name', user.name if user else '') }}" autocomplete="name" required></label>
             <label>Email<input name="email" type="email" value="{{ request.form.get('email', user.email if user else '') }}" autocomplete="email" required></label>

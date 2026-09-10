@@ -1,3 +1,4 @@
+{% from "_location.html" import location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Избранное — ZooLand</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body class="favorites-page">
 <header class="site-header">
@@ -26,7 +24,7 @@
         <h1>Избранное</h1>
         <p>Объявления, которые вы сохранили. Нажмите на сердечко, чтобы убрать из избранного.</p>
     </section>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <section class="cards-section">
         <div class="cards">
             {% for item in items %}
@@ -34,29 +32,29 @@
                 {% if item.kind == 'food' %}
                 <a class="card-link" href="{{ url_for('food_detail', food_id=item.id) }}">
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.category }}</span><span class="kind-badge">Товар</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ location_text(item.country_code, item.city) }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% elif item.kind == 'service' %}
                 <a class="card-link" href="{{ url_for('service_detail', service_id=item.id) }}">
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">✂️</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span><span class="kind-badge">Услуга</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ location_text(item.country_code, item.city) }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% else %}
                 <a class="card-link" href="{{ url_for('animal_detail', animal_id=item.id) }}">
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🐾</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span><span class="kind-badge">Продам</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.breed }}</h3><p class="price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</p><p class="meta">{{ item.age }} лет <span>•</span> {{ item.city }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.breed }}</h3><p class="price">{{ '{:,.0f}'.format(item.price or 0).replace(',', ' ') }} ₽</p><p class="meta">{{ item.age }} лет <span>•</span> {{ location_text(item.country_code, item.city) }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% endif %}
                 <form method="post" action="{{ url_for('toggle_favorite', listing_type=item.fav_type, listing_id=item.id) }}" class="fav-form">

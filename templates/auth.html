@@ -4,8 +4,6 @@
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{% if mode == 'login' %}Вход{% else %}Регистрация{% endif %} — ZooLand</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-  <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
   <header class="site-header"><div class="header-inner"><a class="brand" href="{{ url_for('index') }}"><span class="brand-mark">Z</span><span>Zoo<span>Land</span></span></a><a class="back-link" href="{{ url_for('index') }}">← На главную</a></div></header>
@@ -13,11 +11,25 @@
     <p class="eyebrow">ZooLand</p>
     <h1>{% if mode == 'login' %}С возвращением{% else %}Создайте аккаунт{% endif %}</h1>
     <p>{% if mode == 'login' %}Войдите, чтобы управлять своими объявлениями.{% else %}Выберите страну, укажите номер и email. После регистрации на почту придёт одноразовый код-пароль для подтверждения email.{% endif %}</p>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <form method="post" class="auth-form">
-      {% if mode == 'register' %}<label>Имя<input name="name" required autocomplete="name"></label><label>Страна и код<select name="phone_country" required>{% for country, code in country_codes %}<option value="{{ code }}" {% if code == '+7' and country == 'Россия' %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна — свой код ниже</option></select></label><label>Код другой страны<input name="phone_country_custom" type="tel" placeholder="Например, +351"></label><label>Номер телефона<input name="phone" type="tel" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>{% endif %}
-      <label>Email<input name="email" type="email" required autocomplete="email"></label>
-      <label>Пароль<input name="password" type="password" minlength="10" required autocomplete="{% if mode == 'login' %}current-password{% else %}new-password{% endif %}"></label>
+      {% if mode == 'register' %}{% set selected_phone_country = request.form.get('phone_country', '+7') %}<label>Имя<input name="name" value="{{ request.form.get('name', '') }}" maxlength="80" required autocomplete="name"></label><label>Страна и код<select name="phone_country" required>{% for country, code in country_codes %}<option value="{{ code }}" {% if code == selected_phone_country and (code != '+7' or country == 'Россия') %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="" {% if selected_phone_country == '' %}selected{% endif %}>Другая страна — свой код ниже</option></select></label><label>Код другой страны<input name="phone_country_custom" value="{{ request.form.get('phone_country_custom', '') }}" type="tel" maxlength="8" placeholder="Например, +351"></label><label>Номер телефона<input name="phone" value="{{ request.form.get('phone', '') }}" type="tel" maxlength="32" placeholder="Например, 999 123 45 67" autocomplete="tel" required></label>{% endif %}
+      <label>Email<input name="email" value="{{ request.form.get('email', '') }}" type="email" maxlength="254" required autocomplete="email"></label>
+      <label>Пароль<input name="password" type="password" minlength="10" maxlength="128" required autocomplete="{% if mode == 'login' %}current-password{% else %}new-password{% endif %}"></label>
+      {% if mode == 'register' %}
+      <fieldset class="auth-consents">
+        <legend>Обязательные согласия</legend>
+        <label class="auth-consent" for="accept-terms">
+          <input id="accept-terms" name="accept_terms" type="checkbox" value="1" {% if request.form.get('accept_terms') == '1' %}checked{% endif %} required>
+          <span>Я принимаю <a href="{{ url_for('terms_of_use') }}" target="_blank" rel="noopener">Условия пользования сайтом</a>.</span>
+        </label>
+        <label class="auth-consent" for="accept-privacy">
+          <input id="accept-privacy" name="accept_privacy" type="checkbox" value="1" {% if request.form.get('accept_privacy') == '1' %}checked{% endif %} required>
+          <span>Я даю отдельное согласие на обработку персональных данных и подтверждаю, что ознакомился(-ась) с <a href="{{ url_for('privacy_policy') }}" target="_blank" rel="noopener">Политикой конфиденциальности</a>.</span>
+        </label>
+        <p>Без каждого из этих подтверждений создать аккаунт нельзя.</p>
+      </fieldset>
+      {% endif %}
       <button type="submit">{% if mode == 'login' %}Войти{% else %}Зарегистрироваться и получить код{% endif %}</button>
     </form>
     <p class="auth-switch">{% if mode == 'login' %}Нет аккаунта? <a href="{{ url_for('register') }}">Зарегистрироваться</a> · <a href="{{ url_for('forgot_password') }}">Забыли пароль?</a>{% else %}Уже есть аккаунт? <a href="{{ url_for('login') }}">Войти</a>{% endif %}</p>

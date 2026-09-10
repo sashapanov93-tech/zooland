@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pip-audit
+
+      - name: Check dependency consistency
+        run: python -m pip check
+
+      - name: Compile Python sources
+        run: python -m py_compile app.py catalog.py image_security.py services.py wsgi.py
+
+      - name: Run unit tests with an isolated temporary database
+        run: python -m unittest discover -v -p 'test_*.py'
+
+      - name: Audit runtime requirements
+        run: pip-audit --requirement requirements.txt

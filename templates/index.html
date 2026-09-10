@@ -1,3 +1,4 @@
+{% from "_location.html" import location_picker, location_text %}
 <!DOCTYPE html>
 <html lang="ru">
 <head>
@@ -5,9 +6,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ZooLand — объявления о животных</title>
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <header class="site-header">
@@ -19,7 +17,7 @@
 </header>
 
 <main>
-    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}{% endwith %}
+    {% with messages = get_flashed_messages(with_categories=true) %}{% for category, message in messages %}<div class="flash {{ category }}" role="{{ 'alert' if category == 'error' else 'status' }}">{{ message }}</div>{% endfor %}{% endwith %}
     <section class="hero">
         <div class="hero-content">
             <p class="eyebrow">Питомцы ищут дом</p>
@@ -37,9 +35,9 @@
             <label class="search-field">
                 <span class="sr-only">Поиск</span>
                 <span aria-hidden="true">⌕</span>
-                <input type="search" name="q" value="{{ search }}" placeholder="Порода, услуга, питание или аксессуар" title="Поиск понимает ошибочную раскладку: например, rjn = кот">
+                <input type="search" name="q" value="{{ search }}" maxlength="120" placeholder="Порода, услуга, питание или аксессуар" title="Поиск понимает ошибочную раскладку: например, rjn = кот">
             </label>
-            <input name="city" list="cities" value="{{ selected_city }}" placeholder="Любой город" aria-label="Город">
+            {{ location_picker('catalog-search', selected_country|default(''), selected_city, true) }}
             <select name="kind" aria-label="Тип объявления">
                 <option value="">Все</option>
                 <option value="animals" {% if kind == 'animals' %}selected{% endif %}>Животные</option>
@@ -51,7 +49,7 @@
                 <option value="">Все</option>
                 {% for type in animal_types %}<option value="{{ type }}" {% if selected_type == type %}selected{% endif %}>{{ type }}</option>{% endfor %}
             </select>
-            <details class="advanced-filters"><summary>Расширенные фильтры</summary><div class="filter-grid"><input name="breed" value="{{ filters.breed }}" placeholder="Порода"><input type="number" name="price_min" value="{{ filters.price_min }}" min="0" placeholder="Цена от"><input type="number" name="price_max" value="{{ filters.price_max }}" min="0" placeholder="Цена до"><input type="number" name="age_min" value="{{ filters.age_min }}" min="0" placeholder="Возраст от"><input type="number" name="age_max" value="{{ filters.age_max }}" min="0" placeholder="Возраст до"><select name="sex"><option value="">Любой пол</option><option value="male" {% if filters.sex == 'male' %}selected{% endif %}>Самец</option><option value="female" {% if filters.sex == 'female' %}selected{% endif %}>Самка</option></select><select name="deal"><option value="">Любой тип сделки</option>{% for value in deal_types %}<option value="{{ value }}" {% if filters.deal == value %}selected{% endif %}>{{ deal_type_labels[value] }}</option>{% endfor %}</select><label class="filter-check"><input type="checkbox" name="only_photo" value="1" {% if filters.only_photo %}checked{% endif %}><span>Только с фото</span></label><label class="filter-check"><input type="checkbox" name="vaccinated" value="1" {% if filters.vaccinated %}checked{% endif %}><span>С прививками</span></label><label class="filter-check"><input type="checkbox" name="delivery" value="1" {% if filters.delivery %}checked{% endif %}><span>Есть доставка</span></label></div></details>
+            <details class="advanced-filters"><summary>Расширенные фильтры</summary><div class="filter-grid"><input name="breed" value="{{ filters.breed }}" maxlength="120" placeholder="Порода"><input type="number" name="price_min" value="{{ filters.price_min }}" min="0" max="100000000" placeholder="Цена от"><input type="number" name="price_max" value="{{ filters.price_max }}" min="0" max="100000000" placeholder="Цена до"><input type="number" name="age_min" value="{{ filters.age_min }}" min="0" max="200" placeholder="Возраст от"><input type="number" name="age_max" value="{{ filters.age_max }}" min="0" max="200" placeholder="Возраст до"><select name="sex"><option value="">Любой пол</option><option value="male" {% if filters.sex == 'male' %}selected{% endif %}>Самец</option><option value="female" {% if filters.sex == 'female' %}selected{% endif %}>Самка</option></select><select name="deal"><option value="">Любой тип сделки</option>{% for value in deal_types %}<option value="{{ value }}" {% if filters.deal == value %}selected{% endif %}>{{ deal_type_labels[value] }}</option>{% endfor %}</select><label class="filter-check"><input type="checkbox" name="only_photo" value="1" {% if filters.only_photo %}checked{% endif %}><span>Только с фото</span></label><label class="filter-check"><input type="checkbox" name="vaccinated" value="1" {% if filters.vaccinated %}checked{% endif %}><span>С прививками</span></label><label class="filter-check"><input type="checkbox" name="delivery" value="1" {% if filters.delivery %}checked{% endif %}><span>Есть доставка</span></label></div></details>
             <button type="submit">Найти</button>
         </form>
     </section>
@@ -91,12 +89,12 @@
             <input type="date" name="birth_date" title="Дата рождения">
             <fieldset class="animal-facts"><legend>Информация о питомце</legend><label><input type="checkbox" name="vaccinated" value="1"><span>Есть прививки</span></label><label><input type="checkbox" name="vet_passport" value="1"><span>Ветпаспорт</span></label><label><input type="checkbox" name="pedigree" value="1"><span>Родословная</span></label><label><input type="checkbox" name="sterilized" value="1"><span>Стерилизован/кастрирован</span></label><label><input type="checkbox" name="delivery" value="1"><span>Возможна доставка</span></label></fieldset>
             <input type="number" name="price" placeholder="Цена" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('publish-animal', account_user.country_code|default('RU', true)) }}
             <textarea name="description" placeholder="Описание: характер, особенности, условия передачи"></textarea>
             <fieldset class="contact-choice"><legend>Как с вами связаться</legend><label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" checked><span>По телефону</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" checked><span>В сообщениях ZooLand</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram"><span>В Telegram</span></label><label class="pet-check"><input type="radio" name="phone_source" value="profile" checked><span>Номер из профиля</span></label><label class="pet-check"><input type="radio" name="phone_source" value="other"><span>Другой номер</span></label><select name="phone_country">{% for country, code in country_codes %}<option value="{{ code }}" {% if code == '+7' and country == 'Россия' %}selected{% endif %}>{{ country }} · {{ code }}</option>{% endfor %}<option value="">Другая страна</option></select><input type="tel" name="phone_country_custom" placeholder="Код другой страны, +351"><input type="tel" name="contacts" placeholder="Другой номер (если выбран)"></fieldset>
             <label class="file-input">Фото питомца — JPG, PNG или WebP (до 10 шт, до 5 МБ каждое) <input type="file" name="photos" accept="image/jpeg,image/png,image/webp" multiple></label>
             <button type="submit">Опубликовать объявление</button>
-            <p class="form-note">Размещая объявление, вы подтверждаете, что животное разрешено к законному содержанию и передаче в РФ. Охраняемые и дикие виды не публикуются.</p>
+            <p class="form-note">Размещая объявление, вы подтверждаете, что животное разрешено к законному содержанию и передаче в выбранной стране. Охраняемые и дикие виды не публикуются.</p>
         </form>
         <form class="add-form kind-form" data-kind-form="food" action="{{ url_for('add_food') }}" method="post" enctype="multipart/form-data" hidden>
             <p class="publish-validation-message" role="alert" aria-live="polite" hidden></p>
@@ -105,7 +103,7 @@
                 {% for ft in food_types %}<option value="{{ ft }}">{{ ft }}</option>{% endfor %}
             </select>
             <input type="text" name="title" placeholder="Название (например, Корм Acana для собак)" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('publish-food', account_user.country_code|default('RU', true)) }}
             <input type="number" name="price" placeholder="Цена, ₽ (необязательно)">
             <textarea name="description" placeholder="Описание: состав, вес, состояние, условия передачи"></textarea>
             <fieldset class="contact-choice"><legend>Как с вами связаться</legend><label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" checked><span>По телефону из профиля</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" checked><span>В сообщениях ZooLand</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram"><span>В Telegram</span></label></fieldset>
@@ -120,7 +118,7 @@
                 {% for category in accessory_types %}<option value="{{ category }}">{{ category }}</option>{% endfor %}
             </select>
             <input type="text" name="title" placeholder="Название аксессуара" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('publish-accessory', account_user.country_code|default('RU', true)) }}
             <input type="number" name="price" placeholder="Цена, ₽ (необязательно)">
             <textarea name="description" placeholder="Описание, состояние и условия передачи"></textarea>
             <fieldset class="contact-choice"><legend>Как с вами связаться</legend><label class="pet-check"><input type="checkbox" name="contact_methods" value="phone" checked><span>По телефону из профиля</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="chat" checked><span>В сообщениях ZooLand</span></label><label class="pet-check"><input type="checkbox" name="contact_methods" value="telegram"><span>В Telegram</span></label></fieldset>
@@ -135,7 +133,7 @@
                 {% for st in service_types %}<option value="{{ st }}">{{ st }}</option>{% endfor %}
             </select>
             <input type="text" name="title" placeholder="Название (например, Груминг кошек)" required>
-            <input type="text" name="city" list="cities" placeholder="Город" required>
+            {{ location_picker('publish-service', account_user.country_code|default('RU', true)) }}
             <input type="number" name="price" placeholder="Цена услуги, ₽ (необязательно)">
             <div class="pet-types">
                 <span class="pet-types-label">С какими животными работаете:</span>
@@ -154,7 +152,7 @@
 
     <section id="catalog" class="cards-section">
         <div class="catalog-header"><div><p class="eyebrow">Каталог</p><h2>Свежие объявления</h2><span class="result-count">Найдено: {{ items|length }}</span></div><div class="view-switch" data-view-target="main-listings"><button type="button" data-view="grid" aria-label="Показать плиткой">▦ Плитка</button><button type="button" data-view="list" aria-label="Показать списком">☷ Список</button></div>
-        <form method="get" class="sort-form"><input type="hidden" name="q" value="{{ search }}"><input type="hidden" name="city" value="{{ selected_city }}"><input type="hidden" name="type" value="{{ selected_type }}"><input type="hidden" name="kind" value="{{ kind }}"><label>Сортировка <select name="sort" onchange="this.form.submit()"><option value="new" {% if sort == 'new' %}selected{% endif %}>Сначала новые</option><option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>Сначала дешевле</option><option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>Сначала дороже</option></select></label></form></div>
+        <form method="get" class="sort-form"><input type="hidden" name="q" value="{{ search }}"><input type="hidden" name="country" value="{{ selected_country|default('') }}"><input type="hidden" name="city" value="{{ selected_city }}"><input type="hidden" name="type" value="{{ selected_type }}"><input type="hidden" name="kind" value="{{ kind }}"><label>Сортировка <select name="sort" data-submit-on-change><option value="new" {% if sort == 'new' %}selected{% endif %}>Сначала новые</option><option value="price_asc" {% if sort == 'price_asc' %}selected{% endif %}>Сначала дешевле</option><option value="price_desc" {% if sort == 'price_desc' %}selected{% endif %}>Сначала дороже</option></select></label></form></div>
         {% if account_user %}
         <form method="post" action="{{ url_for('save_search') }}" class="save-search-form">
             <div class="save-search-copy">
@@ -163,7 +161,7 @@
             </div>
             <label class="sr-only" for="saved-search-name">Название сохранённого поиска</label>
             <input type="text" id="saved-search-name" name="name" maxlength="80" placeholder="Например: Бигль в Москве">
-            <input type="hidden" name="q" value="{{ search }}"><input type="hidden" name="city" value="{{ selected_city }}"><input type="hidden" name="type" value="{{ selected_type }}"><input type="hidden" name="kind" value="{{ kind }}">{% for key, value in filters.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
+            <input type="hidden" name="q" value="{{ search }}"><input type="hidden" name="country" value="{{ selected_country|default('') }}"><input type="hidden" name="city" value="{{ selected_city }}"><input type="hidden" name="type" value="{{ selected_type }}"><input type="hidden" name="kind" value="{{ kind }}">{% for key, value in filters.items() %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}
             <button type="submit">Сохранить</button>
         </form>
         {% endif %}
@@ -176,11 +174,11 @@
                 {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
                 <a class="card-link" href="{{ url_for('advertising_click', request_id=item.advertising_id) if item.advertising_id else url_for('food_detail', food_id=item.id) }}"{% if item.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🦴</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.category }}</span><span class="kind-badge">Товар</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ location_text(item.country_code, item.city) }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробнее на странице товара.' }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% if account_user and item.user_id != account_user.id and 'chat' in methods %}<a class="contact-link card-contact" data-listing-metric="chat_click" data-listing-type="food" data-listing-id="{{ item.id }}" href="{{ url_for('message_thread', listing_type='food', listing_id=item.id) }}">Написать сообщение</a>{% endif %}
                 {% if 'telegram' in methods and item.owner_telegram %}<a class="contact-link card-contact telegram-card" data-listing-metric="telegram_click" data-listing-type="food" data-listing-id="{{ item.id }}" href="https://t.me/{{ item.owner_telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>{% endif %}
@@ -189,22 +187,22 @@
                 {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}
                 <a class="card-link" href="{{ url_for('advertising_click', request_id=item.advertising_id) if item.advertising_id else url_for('service_detail', service_id=item.id) }}"{% if item.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.title }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.title }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">✂️</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span><span class="kind-badge">Услуга</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ item.city or 'Город не указан' }} <span>•</span> {{ item.pet_types }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробнее на странице услуги.' }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.title }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% endif %}<p class="meta">{{ location_text(item.country_code, item.city) }} <span>•</span> {{ item.pet_types }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробнее на странице услуги.' }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% if 'telegram' in methods and item.owner_telegram %}<a class="contact-link card-contact telegram-card" data-listing-metric="telegram_click" data-listing-type="service" data-listing-id="{{ item.id }}" href="https://t.me/{{ item.owner_telegram }}" target="_blank" rel="noopener">Написать в Telegram</a>{% endif %}
                 {% if account_user and item.user_id != account_user.id %}<form method="post" action="{{ url_for('toggle_favorite', listing_type='service', listing_id=item.id) }}" class="fav-form"><button type="submit" class="fav-btn {% if is_favorite('service', item.id) %}active{% endif %}" title="{% if is_favorite('service', item.id) %}Убрать из избранного{% else %}В избранное{% endif %}" aria-label="{% if is_favorite('service', item.id) %}Убрать из избранного{% else %}В избранное{% endif %}">♥</button></form>{% endif %}
                 {% else %}
                 <a class="card-link" href="{{ url_for('advertising_click', request_id=item.advertising_id) if item.advertising_id else url_for('animal_detail', animal_id=item.id) }}"{% if item.advertising_id %} rel="sponsored nofollow"{% endif %}>
                 {% if item.photo %}
-                <img src="{{ url_for('static', filename='uploads/' + item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">
+                <img src="{{ url_for('uploaded_file', filename=item.photo.split(',')[0]) }}" alt="{{ item.type }} {{ item.breed }}">
                 {% else %}<div class="card-placeholder" aria-hidden="true">🐾</div>
                 {% endif %}
                 <div class="card-body"><div class="card-topline"><span>{{ item.type }}</span><span class="kind-badge {% if item.deal_type == 'buy' %}buy-badge{% endif %}">{{ deal_type_labels.get(item.deal_type, 'Продам') }}</span></div>{% if item.deal_status == 'reserved' %}<span class="listing-status-pill reserved">В резерве</span>{% endif %}
-                <h3>{{ item.breed }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% elif item.deal_type == 'friend' %}<p class="price price-negotiable">По договорённости</p>{% else %}<p class="price price-negotiable">Бесплатно</p>{% endif %}<p class="meta">{{ item.age }} лет <span>•</span> {{ item.city }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p><span class="card-more">Подробнее →</span></div>
+                <h3>{{ item.breed }}</h3>{% if item.price %}<p class="price">{{ '{:,.0f}'.format(item.price).replace(',', ' ') }} ₽</p>{% elif item.deal_type == 'friend' %}<p class="price price-negotiable">По договорённости</p>{% else %}<p class="price price-negotiable">Бесплатно</p>{% endif %}<p class="meta">{{ item.age }} лет <span>•</span> {{ location_text(item.country_code, item.city) }}</p><p class="publication-date">Опубликовано {{ item.created_at|publication_date }}</p><p class="description">{{ item.description or 'Подробности уточняйте у автора объявления.' }}</p><span class="card-more">Подробнее →</span></div>
                 </a>
                 {% if can_manage(item) %}<div class="card-menu"><button class="menu-btn" type="button" aria-label="Действия с объявлением">•••</button><div class="menu-dropdown"><a href="{{ url_for('edit_animal', animal_id=item.id) }}">Редактировать</a><form action="{{ url_for('delete_animal', animal_id=item.id) }}" method="post"><button type="submit">Удалить</button></form></div></div>{% endif %}
                 {% set methods = (item.contact_methods or 'phone,chat,telegram').split(',') %}{% if 'phone' in methods %}<a class="contact-link card-contact" data-listing-metric="phone_click" data-listing-type="animal" data-listing-id="{{ item.id }}" href="tel:{{ item.contacts|replace(' ', '') }}">Связаться с хозяином</a>{% endif %}
@@ -219,9 +217,9 @@
         </div>
     </section>
 </main>
-<datalist id="cities">{% for city in cities %}<option value="{{ city }}">{% endfor %}</datalist><datalist id="breeds"></datalist>
+<datalist id="breeds"></datalist>
 {% include "_footer.html" %}
-<script id="zoo-breeds-data" type="application/json">{{ breeds|tojson }}</script>
+<div id="zoo-breeds-data" hidden>{{ breeds|tojson }}</div>
 <script src="{{ url_for('static', filename='script.js') }}"></script>
 </body>
 </html>
