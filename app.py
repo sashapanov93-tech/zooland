@@ -11,6 +11,9 @@ import smtplib
 import ssl
 import unicodedata
 import click
+import json
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from hashlib import sha256
@@ -1401,38 +1404,67 @@ def short_code_hash(code):
 
 
 def send_email(recipient, subject, body, reply_to=None):
-    """Отправляет письмо через единый ящик поддержки, заданный в окружении."""
-    host = SMTP_HOST
-    sender = SMTP_FROM or SUPPORT_EMAIL
-    if not host or not sender:
+    """Отправляет письма через Resend HTTPS API."""
+
+    api_key = os.getenv("ZOOLAND_RESEND_API_KEY", "").strip()
+    sender = os.getenv(
+        "ZOOLAND_RESEND_FROM",
+        "ZooLand <onboarding@resend.dev>",
+    ).strip()
+
+    if not api_key:
+        app.logger.warning("Resend delivery failed: API key is not configured.")
         return False
+
+    payload = {
+        "from": sender,
+        "to": [recipient],
+        "subject": str(subject or ""),
+        "text": str(body or ""),
+    }
+
+    if reply_to:
+        payload["reply_to"] = reply_to
+
+    request_data = json.dumps(payload).encode("utf-8")
+
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=request_data,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "ZooLand/1.0",
+        },
+    )
+
     try:
-        # Тема иногда содержит пользовательское название поиска или обращения.
-        # Переносы строк нельзя передавать в email-заголовки: это и ошибка
-        # EmailMessage, и классический вектор подмены заголовков.
-        safe_subject = re.sub(r"[\r\n]+", " ", str(subject or "")).strip()[:200]
-        message = EmailMessage()
-        message["Subject"] = safe_subject
-        message["From"] = sender
-        message["To"] = recipient
-        if reply_to:
-            message["Reply-To"] = reply_to
-        message.set_content(str(body or ""))
-        with smtplib.SMTP(host, SMTP_PORT, timeout=15) as smtp:
-            if not SMTP_TLS:
-                raise smtplib.SMTPException("ZooLand requires verified STARTTLS for SMTP")
-            smtp.ehlo()
-            smtp.starttls(context=ssl.create_default_context())
-            smtp.ehlo()
-            username = SMTP_USERNAME
-            if username:
-                smtp.login(username, SMTP_PASSWORD)
-            smtp.send_message(message)
-        return True
-    except (OSError, TypeError, ValueError, smtplib.SMTPException) as error:
-        # Не пишем recipient, тело, код или ответ сервера: только безопасный
-        # класс ошибки, достаточный для первичной диагностики.
-        app.logger.warning("SMTP delivery failed (%s).", type(error).__name__)
+        with urllib.request.urlopen(request, timeout=15) as response:
+            status = response.getcode()
+
+            if 200 <= status < 300:
+                return True
+
+            app.logger.warning(
+                "Resend delivery failed with HTTP status %s.",
+                status,
+            )
+            return False
+
+    except urllib.error.HTTPError as error:
+        # Не выводим email, код подтверждения или API-ключ.
+        app.logger.warning(
+            "Resend delivery failed (HTTP %s).",
+            error.code,
+        )
+        return False
+
+    except (urllib.error.URLError, OSError, TypeError, ValueError) as error:
+        app.logger.warning(
+            "Resend delivery failed (%s).",
+            type(error).__name__,
+        )
         return False
 
 
