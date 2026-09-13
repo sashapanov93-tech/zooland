@@ -942,6 +942,56 @@ def init_db():
     connection.close()
 
 
+def ensure_bootstrap_admin():
+    email = os.getenv("ZOOLAND_ADMIN_EMAIL", "").strip().lower()
+    password_hash = os.getenv("ZOOLAND_ADMIN_PASSWORD_HASH", "").strip()
+
+    if not email or not password_hash:
+        return
+
+    connection = db()
+
+    existing = connection.execute(
+        "SELECT id FROM users WHERE lower(email)=?",
+        (email,),
+    ).fetchone()
+
+    if existing:
+        connection.execute(
+            """
+            UPDATE users
+            SET is_admin=1,
+                email_verified=1
+            WHERE id=?
+            """,
+            (existing["id"],),
+        )
+    else:
+        connection.execute(
+            """
+            INSERT INTO users (
+                name,
+                email,
+                password_hash,
+                created_at,
+                email_verified,
+                is_admin,
+                session_version,
+                country_code
+            )
+            VALUES (?, ?, ?, ?, 1, 1, 1, 'RU')
+            """,
+            (
+                "zooland",
+                email,
+                password_hash,
+                utcnow(),
+            ),
+        )
+
+    connection.commit()
+
+
 def utcnow():
     return datetime.now(timezone.utc).isoformat()
 
@@ -1314,6 +1364,8 @@ def stage_advertising_revision(advertisement, payload):
          advertisement["updated_at"]),
     )
     return cursor.rowcount == 1
+
+
 
 
 def advertising_revision_validation_errors(payload, advertisement):
