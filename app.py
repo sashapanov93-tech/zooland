@@ -5694,6 +5694,7 @@ def send_message(listing_type, listing_id):
 def init_db_command():
     """Создаёт или обновляет схему одним процессом до запуска Gunicorn."""
     init_db()
+    ensure_bootstrap_admin() 
     click.echo(f"Схема ZooLand готова: {DB_NAME}")
 
 
