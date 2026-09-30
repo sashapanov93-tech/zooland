@@ -7,15 +7,11 @@ import re
 import secrets
 import sqlite3
 import time
-import smtplib
-import ssl
 import unicodedata
 import click
-import json
 import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
-from email.message import EmailMessage
 from hashlib import sha256
 from functools import wraps
 from urllib.parse import urljoin, urlparse
@@ -399,8 +395,13 @@ def rate_limit():
         return None
     # Авторизованному модератору лимит не мешает проверять объявления и
     # обращения. Роль сверяется с БД, а не с параметрами запроса или формой.
-    if current_user_is_moderator():
-        return None
+    # При недоступности БД (lock) не роняем весь запрос с 500 — считаем
+    # посетителя обычным и применяем общий лимит.
+    try:
+        if current_user_is_moderator():
+            return None
+    except Exception:
+        pass
     # IP в бане — отклоняем все запросы до окончания бана.
     if ip in _banned_until:
         if now < _banned_until[ip]:
@@ -504,6 +505,33 @@ def apply_security_headers(response):
 def too_large(_error):
     return "Файл слишком большой. Максимальный размер одного файла — 5 МБ, всего до 10 файлов.", 413
 
+
+@app.errorhandler(404)
+def page_not_found(_error):
+    # Единый ответ без fingerprint версии фреймворка и без путей.
+    return "Страница не найдена.", 404
+
+
+@app.errorhandler(429)
+def too_many_requests(_error):
+    return "Слишком много запросов. Попробуйте позже.", 429
+
+
+@app.errorhandler(500)
+def internal_error(_error):
+    # Не светим трейсбек наружу; битую транзакцию откатываем, чтобы
+    # переиспользованное соединение не травило следующие запросы.
+    try:
+        connection = g.pop("db", None)
+        if connection is not None:
+            try:
+                connection.rollback()
+            finally:
+                connection.close()
+    except Exception:
+        pass
+    return "Внутренняя ошибка. Попробуйте обновить страницу позже.", 500
+
 with open(os.path.join(PROJECT_ROOT, "static", "locations.json"), encoding="utf-8") as locations_file:
     LOCATIONS_DATA = json.load(locations_file)
 
@@ -580,8 +608,16 @@ BREED_ALIASES = {
 
 def db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_NAME)
+        # timeout=30 + busy_timeout: три gunicorn-worker не роняют запрос
+        # с "database is locked", а ждут освобождения write-lock.
+        g.db = sqlite3.connect(DB_NAME, timeout=30.0, check_same_thread=False)
         g.db.row_factory = sqlite3.Row
+        try:
+            g.db.execute("PRAGMA busy_timeout=30000")
+            g.db.execute("PRAGMA foreign_keys=ON")
+            g.db.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
     return g.db
 
 
@@ -595,7 +631,16 @@ def close_db(_error):
 def init_db():
     os.makedirs(os.path.dirname(DB_NAME) or PROJECT_ROOT, mode=0o700, exist_ok=True)
     os.makedirs(app.config["UPLOAD_FOLDER"], mode=0o700, exist_ok=True)
-    connection = sqlite3.connect(DB_NAME)
+    connection = sqlite3.connect(DB_NAME, timeout=30.0)
+    # WAL: читатели не блокируются писателем — критично для 3 gunicorn workers.
+    # Режим персистентный, достаточно выставить один раз при миграции.
+    try:
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA foreign_keys=ON")
+    except sqlite3.Error:
+        pass
     cursor = connection.cursor()
     cursor.execute("""CREATE TABLE IF NOT EXISTS animals (
         id INTEGER PRIMARY KEY AUTOINCREMENT, type TEXT, breed TEXT, age INTEGER,
@@ -2669,7 +2714,14 @@ def housekeeping():
     # запускали одну и ту же уборку. Между Gunicorn workers возможен лишь один
     # короткий запуск раз в пять минут; SQLite сериализует эти транзакции.
     _next_housekeeping_at = now + 300
-    cleanup_expired()
+    # Уборка — фоновая задача на пользовательском трафике. Её падение
+    # (lock, недоступность диска) никогда не должно ронять сам запрос с 500.
+    try:
+        cleanup_expired()
+    except sqlite3.Error:
+        pass
+    except Exception:
+        pass
     return None
 
 
@@ -4591,10 +4643,13 @@ def settings_profile():
             flash(str(error), "error")
             return redirect(url_for("settings"))
         if avatar:
-            try:
-                os.remove(os.path.join(app.config["UPLOAD_FOLDER"], avatar))
-            except OSError:
-                pass
+            # Значение из БД никогда не должно вывести удаление из каталога:
+            # тот же basename-барьер, что и в delete_photos().
+            if avatar == os.path.basename(avatar) and not avatar.startswith("."):
+                try:
+                    os.remove(os.path.join(app.config["UPLOAD_FOLDER"], avatar))
+                except OSError:
+                    pass
         avatar = filename
     db().execute("UPDATE users SET name=?, country_code=?, city=?, gender=?, birth_date=?, about=?, avatar=?, telegram=? WHERE id=?",
                  (name, country_code, city or None, gender or None, birth_date or None, about or None, avatar, telegram, user["id"]))
