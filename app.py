@@ -16,7 +16,7 @@ from hashlib import sha256
 from functools import wraps
 from urllib.parse import urljoin, urlparse
 
-from flask import Flask, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
+from flask import Flask, Response, abort, flash, g, jsonify, redirect, render_template, request, send_from_directory, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 from werkzeug.middleware.proxy_fix import ProxyFix
 
@@ -3366,10 +3366,34 @@ def reset_password(token):
     return render_template("reset_password.html", token=token)
 
 
+SUPPORT_FORM_MIN_AGE_SECONDS = 3
+
+
+def is_support_bot_submission():
+    """Honeypot + минимальное время заполнения формы поддержки.
+
+    Внешняя капча не используется сознательно: она тянет сторонний JS,
+    ломающий CSP default-src 'self'. Боту о срабатывании не сообщаем —
+    caller делает вид, что сообщение отправлено.
+    """
+    if request.form.get("website", "").strip():
+        return True
+    rendered_at = session.get("support_form_at")
+    if not isinstance(rendered_at, (int, float)):
+        return False
+    return (time.time() - rendered_at) < SUPPORT_FORM_MIN_AGE_SECONDS
+
+
 @app.route("/support", methods=["GET", "POST"])
 def support():
     user = current_user()
+    if request.method == "GET":
+        # Метка времени для ловушки на скорость: бот шлёт форму за доли секунды.
+        session["support_form_at"] = time.time()
     if request.method == "POST":
+        if is_support_bot_submission():
+            flash("Сообщение отправлено в поддержку. Мы ответим на указанный email.", "success")
+            return redirect(url_for("support"))
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").lower().strip()
         subject = request.form.get("subject", "").strip()
@@ -3908,6 +3932,38 @@ def favicon():
         conditional=True,
         max_age=30 * 24 * 60 * 60,
     )
+
+
+@app.route("/robots.txt")
+def robots_txt():
+    """Поисковикам открыты публичные разделы; приватные закрыты от индексации."""
+    body = (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /account\n"
+        "Disallow: /admin\n"
+        "Disallow: /edit/\n"
+        "Disallow: /favorites\n"
+        "Disallow: /messages\n"
+        "Disallow: /notifications\n"
+        "Disallow: /password\n"
+        "Disallow: /settings\n"
+        "Disallow: /support\n"
+        "Disallow: /verify-email\n"
+    )
+    return Response(body, mimetype="text/plain")
+
+
+@app.route("/.well-known/security.txt")
+def security_txt():
+    """Контакт для исследователей безопасности по RFC 9116."""
+    expires = (datetime.now(timezone.utc) + timedelta(days=365)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    body = (
+        f"Contact: mailto:{PRIVACY_EMAIL}\n"
+        f"Expires: {expires}\n"
+        "Preferred-Languages: ru, en\n"
+    )
+    return Response(body, mimetype="text/plain")
 
 
 @app.route("/healthz")

@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
@@ -641,6 +642,60 @@ class SecurityRegressionTests(unittest.TestCase):
         token = self.csrf_token(self.client, "/register")
         post_response = self.client.post("/healthz", data={"csrf_token": token})
         self.assertEqual(post_response.status_code, 405)
+
+    def support_data(self, **overrides):
+        data = {
+            "csrf_token": self.csrf_token(self.client, "/support"),
+            "name": "Проверяющий",
+            "email": "checker@gmail.com",
+            "subject": "Вопрос о площадке",
+            "message": "Здравствуйте! Подскажите, как работает резерв объявления?",
+            "website": "",
+        }
+        data.update(overrides)
+        return data
+
+    def test_robots_txt_hides_private_areas(self):
+        response = self.client.get("/robots.txt")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/plain", response.headers.get("Content-Type", ""))
+        body = response.get_data(as_text=True)
+        for area in ("/account", "/admin", "/messages", "/password", "/verify-email"):
+            self.assertIn(f"Disallow: {area}", body)
+
+    def test_well_known_security_txt_has_contact_and_expires(self):
+        response = self.client.get("/.well-known/security.txt")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/plain", response.headers.get("Content-Type", ""))
+        body = response.get_data(as_text=True)
+        self.assertIn("Contact: mailto:", body)
+        self.assertIn("Expires:", body)
+
+    def test_support_honeypot_silently_accepts_without_sending(self):
+        with mock.patch.object(zooland, "send_email", return_value=True) as sender:
+            response = self.client.post(
+                "/support", data=self.support_data(website="https://spam.example")
+            )
+        self.assertEqual(response.status_code, 302)
+        sender.assert_not_called()
+        page = self.client.get("/support")
+        self.assertIn("Сообщение отправлено в поддержку", page.get_data(as_text=True))
+
+    def test_support_instant_submit_silently_accepts_without_sending(self):
+        # GET только что поставил метку времени — мгновенный POST идёт от бота.
+        with mock.patch.object(zooland, "send_email", return_value=True) as sender:
+            response = self.client.post("/support", data=self.support_data())
+        self.assertEqual(response.status_code, 302)
+        sender.assert_not_called()
+
+    def test_support_human_speed_submission_sends_email(self):
+        data = self.support_data()
+        with self.client.session_transaction() as session_data:
+            session_data["support_form_at"] = time.time() - 60
+        with mock.patch.object(zooland, "send_email", return_value=True) as sender:
+            response = self.client.post("/support", data=data)
+        self.assertEqual(response.status_code, 302)
+        sender.assert_called_once()
 
 
 class ProductionConfigurationTests(unittest.TestCase):
