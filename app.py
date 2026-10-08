@@ -1448,8 +1448,81 @@ def short_code_hash(code):
     return hmac.new(app.secret_key.encode("utf-8"), code.encode("utf-8"), sha256).hexdigest()
 
 
+def _brevo_sender():
+    """Разбирает ZOOLAND_BREVO_FROM вида 'ZooLand <box@example.com>' или просто email."""
+    raw = os.getenv("ZOOLAND_BREVO_FROM", "").strip()
+    match = re.fullmatch(r"\s*(.*?)\s*<\s*([^<>\s@]+@[^<>\s@]+)\s*>\s*", raw or "")
+    if match:
+        name = match.group(1).strip().strip("\"'") or "ZooLand"
+        email = match.group(2)
+        if config_email_is_valid(email):
+            return name, email
+        return None
+    if config_email_is_valid(raw):
+        return "ZooLand", raw
+    return None
+
+
+def _post_json_email(*, url, headers, payload, provider):
+    """Общий HTTPS-вызов почтового API. True только при статусе 2xx."""
+    request_data = json.dumps(payload).encode("utf-8")
+    request = urllib.request.Request(
+        url,
+        data=request_data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "ZooLand/1.0",
+            **headers,
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            status = response.getcode()
+            if 200 <= status < 300:
+                return True
+            app.logger.warning("%s delivery failed with HTTP status %s.", provider, status)
+            return False
+    except urllib.error.HTTPError as error:
+        # Не выводим email, коды подтверждения и API-ключи.
+        app.logger.warning("%s delivery failed (HTTP %s).", provider, error.code)
+        return False
+    except (urllib.error.URLError, OSError, TypeError, ValueError) as error:
+        app.logger.warning("%s delivery failed (%s).", provider, type(error).__name__)
+        return False
+
+
 def send_email(recipient, subject, body, reply_to=None):
-    """Отправляет письма через Resend HTTPS API."""
+    """Отправляет письма: сначала Brevo (работает без своего домена),
+    при его отсутствии или ошибке — запасной Resend."""
+
+    recipient = (recipient or "").strip()
+    if not config_email_is_valid(recipient):
+        return False
+    subject = str(subject or "")
+    body = str(body or "")
+    if reply_to and not config_email_is_valid(reply_to):
+        reply_to = None
+
+    brevo_key = os.getenv("ZOOLAND_BREVO_API_KEY", "").strip()
+    brevo_sender = _brevo_sender()
+    if brevo_key and brevo_sender:
+        name, sender_email = brevo_sender
+        payload = {
+            "sender": {"name": name, "email": sender_email},
+            "to": [{"email": recipient}],
+            "subject": subject,
+            "textContent": body,
+        }
+        if reply_to:
+            payload["replyTo"] = {"email": reply_to}
+        if _post_json_email(
+            url="https://api.brevo.com/v3/smtp/email",
+            headers={"api-key": brevo_key},
+            payload=payload,
+            provider="Brevo",
+        ):
+            return True
 
     api_key = os.getenv("ZOOLAND_RESEND_API_KEY", "").strip()
     sender = os.getenv(
@@ -1458,59 +1531,25 @@ def send_email(recipient, subject, body, reply_to=None):
     ).strip()
 
     if not api_key:
-        app.logger.warning("Resend delivery failed: API key is not configured.")
+        app.logger.warning("Email delivery failed: no provider is configured.")
         return False
 
     payload = {
         "from": sender,
         "to": [recipient],
-        "subject": str(subject or ""),
-        "text": str(body or ""),
+        "subject": subject,
+        "text": body,
     }
 
     if reply_to:
         payload["reply_to"] = reply_to
 
-    request_data = json.dumps(payload).encode("utf-8")
-
-    request = urllib.request.Request(
-        "https://api.resend.com/emails",
-        data=request_data,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "User-Agent": "ZooLand/1.0",
-        },
+    return _post_json_email(
+        url="https://api.resend.com/emails",
+        headers={"Authorization": f"Bearer {api_key}"},
+        payload=payload,
+        provider="Resend",
     )
-
-    try:
-        with urllib.request.urlopen(request, timeout=15) as response:
-            status = response.getcode()
-
-            if 200 <= status < 300:
-                return True
-
-            app.logger.warning(
-                "Resend delivery failed with HTTP status %s.",
-                status,
-            )
-            return False
-
-    except urllib.error.HTTPError as error:
-        # Не выводим email, код подтверждения или API-ключ.
-        app.logger.warning(
-            "Resend delivery failed (HTTP %s).",
-            error.code,
-        )
-        return False
-
-    except (urllib.error.URLError, OSError, TypeError, ValueError) as error:
-        app.logger.warning(
-            "Resend delivery failed (%s).",
-            type(error).__name__,
-        )
-        return False
 
 
 def public_url(endpoint, **values):
