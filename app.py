@@ -199,6 +199,13 @@ AUTH_IP_RETENTION_DAYS = 30
 OPERATOR_NAME = os.environ.get("ZOOLAND_OPERATOR_NAME", "").strip()
 OPERATOR_ADDRESS = os.environ.get("ZOOLAND_OPERATOR_ADDRESS", "").strip()
 PRIVACY_EMAIL = os.environ.get("ZOOLAND_PRIVACY_EMAIL", SUPPORT_EMAIL).strip() or SUPPORT_EMAIL
+ADMIN_EMAIL = os.environ.get("ZOOLAND_ADMIN_EMAIL", "").strip().casefold()
+if IS_PRODUCTION and ADMIN_EMAIL and (
+        not config_email_is_valid(ADMIN_EMAIL) or
+        ADMIN_EMAIL.endswith("@example.com")):
+    raise RuntimeError(
+        "ZOOLAND_ADMIN_EMAIL должен быть реальным email администратора."
+    )
 if IS_PRODUCTION and (not OPERATOR_NAME or not OPERATOR_ADDRESS):
     raise RuntimeError(
         "Для production задайте ZOOLAND_OPERATOR_NAME и ZOOLAND_OPERATOR_ADDRESS "
@@ -2525,6 +2532,18 @@ def distance_km(lat1, lon1, lat2, lon2):
     return 6371 * 2 * math.asin(math.sqrt(a))
 
 
+def is_admin_account(user):
+    """Админ ровно один — аккаунт с email из ZOOLAND_ADMIN_EMAIL.
+
+    Пока настройка не задана (локальная разработка), права берутся из флага в
+    базе. В production настройка обязательна: чужой аккаунт не получит
+    админ-панель, даже если флаг is_admin был выставлен вручную.
+    """
+    if ADMIN_EMAIL:
+        return str(user["email"] or "").casefold() == ADMIN_EMAIL
+    return bool(user["is_admin"])
+
+
 def current_user():
     user_id = session.get("user_id")
     if not user_id:
@@ -2533,6 +2552,8 @@ def current_user():
     if not user or session.get("session_version") != user["session_version"]:
         session.clear()
         return None
+    user = dict(user)
+    user["is_admin"] = is_admin_account(user)
     return user
 
 

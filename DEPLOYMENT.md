@@ -94,6 +94,9 @@ sudoedit /etc/zooland/zooland.env
 - новый `ZOOLAND_SECRET_KEY`, созданный командой `openssl rand -hex 48`;
 - реальные `ZOOLAND_OPERATOR_NAME`, `ZOOLAND_OPERATOR_ADDRESS` и
   `ZOOLAND_PRIVACY_EMAIL`;
+- `ZOOLAND_ADMIN_EMAIL` — единственный аккаунт с админ-панелью. Пока переменная
+  не задана, права берутся из флага `is_admin` в базе (режим разработки); в
+  production задайте адрес, иначе админ-панель недоступна никому;
 - рабочие SMTP-параметры с `ZOOLAND_SMTP_TLS=1`;
 - `ZOOLAND_REQUIRE_ANTIVIRUS=1` и адрес доступного `clamd`.
 

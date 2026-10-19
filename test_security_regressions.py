@@ -369,6 +369,51 @@ class SecurityRegressionTests(unittest.TestCase):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
 
+    def test_admin_panel_belongs_only_to_the_configured_email(self):
+        with mock.patch.object(zooland, "ADMIN_EMAIL", "owner-admin@gmail.com"):
+            admin_id = self.create_user(
+                email="owner-admin@gmail.com", phone="+79990000001"
+            )
+            intruder_id = self.create_user(
+                email="intruder@gmail.com", phone="+79990000002"
+            )
+            connection = sqlite3.connect(zooland.DB_NAME)
+            connection.execute("UPDATE users SET is_admin=1 WHERE id=?", (intruder_id,))
+            connection.commit()
+            connection.close()
+
+            self.login_as(intruder_id)
+            with self.subTest(role="intruder with is_admin in database"):
+                self.assertEqual(
+                    self.client.get("/admin/moderation").status_code, 403
+                )
+                self.assertNotIn(
+                    "/admin/moderation",
+                    self.client.get("/account").get_data(as_text=True),
+                )
+
+            self.login_as(admin_id)
+            with self.subTest(role="configured admin"):
+                self.assertEqual(
+                    self.client.get("/admin/moderation").status_code, 200
+                )
+                self.assertIn(
+                    "/admin/moderation",
+                    self.client.get("/account").get_data(as_text=True),
+                )
+
+    def test_admin_panel_falls_back_to_database_flag_without_configuration(self):
+        with mock.patch.object(zooland, "ADMIN_EMAIL", ""):
+            admin_id = self.create_user(
+                email="dev-admin@gmail.com", phone="+79990000001"
+            )
+            connection = sqlite3.connect(zooland.DB_NAME)
+            connection.execute("UPDATE users SET is_admin=1 WHERE id=?", (admin_id,))
+            connection.commit()
+            connection.close()
+            self.login_as(admin_id)
+            self.assertEqual(self.client.get("/admin/moderation").status_code, 200)
+
     def test_admin_users_is_the_only_user_facing_ip_surface(self):
         target_id = self.create_user()
         admin_id = self.create_user(
