@@ -5,7 +5,6 @@ import sys
 import tempfile
 import unittest
 from datetime import datetime
-from unittest import mock
 
 
 TEST_DIRECTORY = tempfile.TemporaryDirectory(prefix="zooland-registration-consent-")
@@ -31,7 +30,6 @@ class RegistrationConsentTests(unittest.TestCase):
         zooland._banned_until.clear()
         connection = zooland.sqlite3.connect(zooland.DB_NAME)
         for table in (
-            "email_verification_codes",
             "rate_limit_events",
             "listing_revisions",
             "animals",
@@ -107,14 +105,13 @@ class RegistrationConsentTests(unittest.TestCase):
                 self.assertEqual(self.user_count(), 0)
 
     def test_successful_registration_stores_server_versions_and_timestamps(self):
-        with mock.patch.object(zooland, "create_email_verification_code", return_value=True):
-            response = self.client.post(
-                "/register",
-                data=self.registration_data(),
-            )
+        response = self.client.post(
+            "/register",
+            data=self.registration_data(),
+        )
 
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(response.headers["Location"].endswith("/verify-email"))
+        self.assertTrue(response.headers["Location"].endswith("/account"))
         connection = zooland.sqlite3.connect(zooland.DB_NAME)
         connection.row_factory = zooland.sqlite3.Row
         user = connection.execute(

@@ -21,6 +21,13 @@ import app as zooland
 zooland.init_db()
 
 
+def advertising_day(offset_days=0):
+    """Дата в часовом поясе показа рекламы (Москва), а не локальном."""
+    return (
+        date.fromisoformat(zooland.advertising_today()) + timedelta(days=offset_days)
+    ).isoformat()
+
+
 class AdvertisingPublicationTests(unittest.TestCase):
     def setUp(self):
         zooland._next_housekeeping_at = 0.0
@@ -146,8 +153,8 @@ class AdvertisingPublicationTests(unittest.TestCase):
 
     def active_advertising_schedule(self):
         return {
-            "start_date": (date.today() - timedelta(days=1)).isoformat(),
-            "end_date": (date.today() + timedelta(days=30)).isoformat(),
+            "start_date": advertising_day(-1),
+            "end_date": advertising_day(30),
         }
 
     def active_revision_form(self, request_id, **overrides):
@@ -574,8 +581,8 @@ class AdvertisingPublicationTests(unittest.TestCase):
         )
         revision_before = self.advertising_revision_row(request_id)
         self.assertIsNotNone(revision_before)
-        new_start_date = (date.today() - timedelta(days=2)).isoformat()
-        new_end_date = (date.today() + timedelta(days=60)).isoformat()
+        new_start_date = advertising_day(-2)
+        new_end_date = advertising_day(60)
 
         self.login_as(admin_id)
         response = self.client.post(
@@ -1030,7 +1037,7 @@ class AdvertisingPublicationTests(unittest.TestCase):
         inactive_id = self.create_advertisement(status="ready", headline="Неактивная реклама")
         expired_id = self.create_advertisement(
             headline="Просроченная реклама",
-            end_date=(date.today() - timedelta(days=1)).isoformat(),
+            end_date=advertising_day(-1),
         )
         response = self.client.get("/")
         html = response.get_data(as_text=True)
@@ -1043,8 +1050,8 @@ class AdvertisingPublicationTests(unittest.TestCase):
 
     def test_cleanup_expired_discards_only_revisions_of_expired_active_advertisements(self):
         owner_id = self.create_user(email="owner@gmail.com")
-        yesterday = (date.today() - timedelta(days=1)).isoformat()
-        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        yesterday = advertising_day(-1)
+        tomorrow = advertising_day(1)
         expired_pending_id = self.create_advertisement(
             user_id=owner_id, email="owner@gmail.com", status="active", end_date=yesterday,
             company="Истёкшая реклама с pending-правкой",
@@ -1118,7 +1125,7 @@ class AdvertisingPublicationTests(unittest.TestCase):
                (type, title, pet_types, city, price, description, status, created_at, expires_at, deal_status)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, 'open')""",
             ("Груминг", "Продвигаемая услуга", "Собаки", "Москва", 1000, "Описание", now,
-             (date.today() + timedelta(days=30)).isoformat()),
+             advertising_day(30)),
         )
         listing_id = cursor.lastrowid
         connection.commit()
@@ -1139,7 +1146,7 @@ class AdvertisingPublicationTests(unittest.TestCase):
                (type, title, pet_types, city, price, description, status, created_at, expires_at, deal_status)
                VALUES (?, ?, ?, ?, ?, ?, 'active', ?, ?, 'open')""",
             ("Передержка", "Нужная услуга", "Кошки", "Москва", 800, "Описание", now,
-             (date.today() + timedelta(days=30)).isoformat()),
+             advertising_day(30)),
         )
         listing_id = cursor.lastrowid
         connection.commit()

@@ -7,7 +7,7 @@ import os
 # и fail-closed проверку загрузок, даже если в локальном .env остался dev mode.
 os.environ["ZOOLAND_ENV"] = "production"
 
-from app import app
+from app import app  # noqa: F401  (Gunicorn целится в wsgi:app)
 
 
 if __name__ == "__main__":

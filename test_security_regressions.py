@@ -144,7 +144,6 @@ class SecurityRegressionTests(unittest.TestCase):
 
         with (
             mock.patch.object(zooland, "generate_password_hash", return_value="unused") as hasher,
-            mock.patch.object(zooland, "create_email_verification_code", return_value=True),
         ):
             response = self.client.post(
                 "/register",
@@ -161,7 +160,6 @@ class SecurityRegressionTests(unittest.TestCase):
 
         with (
             mock.patch.object(zooland, "generate_password_hash", return_value="unused") as hasher,
-            mock.patch.object(zooland, "create_email_verification_code", return_value=True),
         ):
             response = self.client.post(
                 "/register",
@@ -207,19 +205,18 @@ class SecurityRegressionTests(unittest.TestCase):
             )
             self.assertEqual(response.status_code, 200)
 
-        with mock.patch.object(zooland, "create_email_verification_code", return_value=True):
-            response = victim.post(
-                "/register",
-                data=self.registration_data(
-                    victim,
-                    email="target@gmail.com",
-                    phone="999 765 43 21",
-                ),
-                environ_overrides={"REMOTE_ADDR": "203.0.113.20"},
-            )
+        response = victim.post(
+            "/register",
+            data=self.registration_data(
+                victim,
+                email="target@gmail.com",
+                phone="999 765 43 21",
+            ),
+            environ_overrides={"REMOTE_ADDR": "203.0.113.20"},
+        )
 
         self.assertEqual(response.status_code, 302)
-        self.assertTrue(response.headers["Location"].endswith("/verify-email"))
+        self.assertTrue(response.headers["Location"].endswith("/account"))
         self.assertEqual(
             self.scalar("SELECT COUNT(*) FROM users WHERE email=?", ("target@gmail.com",)),
             1,
@@ -327,7 +324,7 @@ class SecurityRegressionTests(unittest.TestCase):
             "203.0.113.41",
         )
 
-    def test_admin_ip_is_recorded_only_after_successful_2fa(self):
+    def test_admin_login_records_ip_immediately(self):
         password = "Strong-Pass-2026!"
         admin_id = self.create_user(
             email="admin@gmail.com", password=password, phone="+79990000001"
@@ -337,51 +334,40 @@ class SecurityRegressionTests(unittest.TestCase):
         connection.commit()
         connection.close()
 
-        with mock.patch.object(zooland, "create_admin_login_code", return_value=True):
-            response = self.client.post(
-                "/login",
-                data={
-                    "csrf_token": self.csrf_token(self.client, "/login"),
-                    "email": "admin@gmail.com",
-                    "password": password,
-                },
-                environ_overrides={"REMOTE_ADDR": "198.51.100.70"},
-            )
-        self.assertEqual(response.status_code, 302)
-        self.assertTrue(response.headers["Location"].endswith("/admin/verify-login"))
-        self.assertIsNone(
-            self.scalar("SELECT last_auth_ip FROM users WHERE id=?", (admin_id,))
-        )
-
-        connection = sqlite3.connect(zooland.DB_NAME)
-        connection.execute(
-            """INSERT INTO admin_login_codes
-                   (user_id, code_hash, expires_at, attempts, created_at)
-               VALUES (?, ?, ?, 0, ?)""",
-            (
-                admin_id,
-                zooland.short_code_hash("123456"),
-                zooland.email_code_expires_at(),
-                zooland.utcnow(),
-            ),
-        )
-        connection.commit()
-        connection.close()
-        with self.client.session_transaction() as session_data:
-            csrf_token = session_data["csrf_token"]
-
         response = self.client.post(
-            "/admin/verify-login",
-            data={"csrf_token": csrf_token, "code": "123456"},
-            environ_overrides={"REMOTE_ADDR": "203.0.113.70"},
+            "/login",
+            data={
+                "csrf_token": self.csrf_token(self.client, "/login"),
+                "email": "admin@gmail.com",
+                "password": password,
+            },
+            environ_overrides={"REMOTE_ADDR": "198.51.100.70"},
         )
-
         self.assertEqual(response.status_code, 302)
         self.assertTrue(response.headers["Location"].endswith("/account"))
         self.assertEqual(
             self.scalar("SELECT last_auth_ip FROM users WHERE id=?", (admin_id,)),
-            "203.0.113.70",
+            "198.51.100.70",
         )
+
+    def test_admin_listing_pages_render_without_server_errors(self):
+        admin_id = self.create_user(
+            email="admin@gmail.com", phone="+79990000001"
+        )
+        connection = sqlite3.connect(zooland.DB_NAME)
+        connection.execute("UPDATE users SET is_admin=1 WHERE id=?", (admin_id,))
+        connection.commit()
+        connection.close()
+        self.login_as(admin_id)
+
+        for path in (
+            "/admin/moderation",
+            f"/admin/users/{admin_id}/listings",
+            "/admin/users",
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 200)
 
     def test_admin_users_is_the_only_user_facing_ip_surface(self):
         target_id = self.create_user()
@@ -660,7 +646,7 @@ class SecurityRegressionTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/plain", response.headers.get("Content-Type", ""))
         body = response.get_data(as_text=True)
-        for area in ("/account", "/admin", "/messages", "/password", "/verify-email"):
+        for area in ("/account", "/admin", "/messages", "/password"):
             self.assertIn(f"Disallow: {area}", body)
 
     def test_well_known_security_txt_has_contact_and_expires(self):

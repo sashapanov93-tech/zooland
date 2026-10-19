@@ -105,8 +105,7 @@
                 <button type="submit" class="settings-save">Обновить</button>
             </form>
         </div>
-        <p class="muted settings-hint">Для смены email нужен текущий пароль, затем код с нового адреса. Смена телефона тоже защищена текущим паролем.</p>
-        {% if pending_email_change %}<p class="muted settings-hint">Ожидается подтверждение адреса {{ pending_email_change.new_email }}. <a href="{{ url_for('verify_email_change') }}">Ввести код</a></p>{% endif %}
+        <p class="muted settings-hint">Для смены email нужен текущий пароль. Смена телефона тоже защищена текущим паролем.</p>
     </section>
 
     <section class="account-section settings-section">

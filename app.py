@@ -489,7 +489,7 @@ def apply_security_headers(response):
         "img-src 'self' data:; connect-src 'self'; script-src 'self'; style-src 'self'; font-src 'self'",
     )
     private_prefixes = (
-        "/account", "/password", "/verify-email", "/settings", "/admin",
+        "/account", "/password", "/settings", "/admin",
         "/messages", "/notifications", "/favorites", "/edit/", "/support",
     )
     if session.get("user_id") or request.path.startswith(private_prefixes):
@@ -679,26 +679,6 @@ def init_db():
         user_id INTEGER NOT NULL, listing_type TEXT NOT NULL, listing_id INTEGER NOT NULL,
         created_at TEXT NOT NULL, PRIMARY KEY (user_id, listing_type, listing_id)
     )""")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS password_reset_tokens (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, token_hash TEXT NOT NULL UNIQUE,
-        expires_at TEXT NOT NULL, used_at TEXT, created_at TEXT NOT NULL
-    )""")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_hash ON password_reset_tokens(token_hash)")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS email_verification_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, code_hash TEXT NOT NULL,
-        expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, used_at TEXT, created_at TEXT NOT NULL
-    )""")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS email_change_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, new_email TEXT NOT NULL,
-        code_hash TEXT NOT NULL, expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
-        used_at TEXT, created_at TEXT NOT NULL
-    )""")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_email_change_codes_user ON email_change_codes(user_id, expires_at)")
-    cursor.execute("""CREATE TABLE IF NOT EXISTS admin_login_codes (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, code_hash TEXT NOT NULL,
-        expires_at TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, used_at TEXT, created_at TEXT NOT NULL
-    )""")
-    cursor.execute("CREATE INDEX IF NOT EXISTS idx_admin_login_codes_user ON admin_login_codes(user_id, expires_at)")
     cursor.execute("""CREATE TABLE IF NOT EXISTS reports (
         id INTEGER PRIMARY KEY AUTOINCREMENT, reporter_id INTEGER NOT NULL, listing_type TEXT NOT NULL,
         listing_id INTEGER NOT NULL, reason TEXT NOT NULL, comment TEXT, status TEXT NOT NULL DEFAULT 'open',
@@ -1380,8 +1360,6 @@ def advertising_revision_validation_errors(payload, advertisement):
 ACTION_RATE_LIMITS = {
     "register": (4, 60 * 60),
     "login": (8, 15 * 60),
-    "verify_resend": (3, 15 * 60),
-    "password_reset": (3, 15 * 60),
     "support": (5, 60 * 60),
     "career": (5, 60 * 60),
     "advertising": (5, 60 * 60),
@@ -1391,7 +1369,6 @@ ACTION_RATE_LIMITS = {
     "upload": (20, 60 * 60),
     "saved_search": (10, 60 * 60),
     "metric": (30, 60),
-    "admin_2fa": (5, 15 * 60),
 }
 
 
@@ -1433,19 +1410,6 @@ def require_sensitive_action(action, subject, message, redirect_endpoint, **valu
 
 def iso_after_days(days):
     return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
-
-
-def password_reset_expires_at():
-    return (datetime.now(timezone.utc) + timedelta(minutes=30)).isoformat()
-
-
-def email_code_expires_at():
-    return (datetime.now(timezone.utc) + timedelta(minutes=15)).isoformat()
-
-
-def short_code_hash(code):
-    """Хеширует короткие одноразовые коды с ключом приложения, а не простым SHA-256."""
-    return hmac.new(app.secret_key.encode("utf-8"), code.encode("utf-8"), sha256).hexdigest()
 
 
 def _brevo_sender():
@@ -1564,68 +1528,6 @@ def local_referrer_or(endpoint, **values):
     if referrer and request_origin_is_trusted(referrer):
         return referrer
     return url_for(endpoint, **values)
-
-
-def send_password_reset_email(recipient, reset_url):
-    return send_email(
-        recipient,
-        "Восстановление пароля ZooLand",
-        f"Для смены пароля ZooLand откройте ссылку:\n\n{reset_url}\n\nСсылка действует 30 минут и используется один раз. Если это были не вы, просто проигнорируйте письмо.",
-    )
-
-
-def create_password_reset_link(user_id):
-    """Создаёт новую одноразовую ссылку; все прежние ссылки этого пользователя отменяются."""
-    raw_token = secrets.token_urlsafe(32)
-    token_hash = sha256(raw_token.encode()).hexdigest()
-    connection = db()
-    connection.execute("DELETE FROM password_reset_tokens WHERE user_id=? OR expires_at < ?", (user_id, utcnow()))
-    connection.execute("INSERT INTO password_reset_tokens (user_id, token_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-                       (user_id, token_hash, password_reset_expires_at(), utcnow()))
-    connection.commit()
-    return public_url("reset_password", token=raw_token), token_hash
-
-
-def create_email_verification_code(user_id, email):
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    connection = db()
-    connection.execute("DELETE FROM email_verification_codes WHERE user_id=?", (user_id,))
-    connection.execute("INSERT INTO email_verification_codes (user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-                       (user_id, short_code_hash(code), email_code_expires_at(), utcnow()))
-    connection.commit()
-    sent = send_email(email, "Код подтверждения ZooLand", f"Ваш код подтверждения email: {code}\n\nКод действует 15 минут. Никому его не сообщайте.")
-    if not sent:
-        connection.execute("DELETE FROM email_verification_codes WHERE user_id=?", (user_id,))
-        connection.commit()
-    return sent
-
-
-def create_email_change_code(user_id, new_email):
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    connection = db()
-    connection.execute("DELETE FROM email_change_codes WHERE user_id=?", (user_id,))
-    connection.execute("INSERT INTO email_change_codes (user_id, new_email, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
-                       (user_id, new_email, short_code_hash(code), email_code_expires_at(), utcnow()))
-    connection.commit()
-    if send_email(new_email, "ZooLand: подтверждение нового email", f"Ваш код для подтверждения нового email: {code}\n\nКод действует 15 минут. Никому его не сообщайте."):
-        return True
-    connection.execute("DELETE FROM email_change_codes WHERE user_id=?", (user_id,))
-    connection.commit()
-    return False
-
-
-def create_admin_login_code(user_id, email):
-    code = f"{secrets.randbelow(1_000_000):06d}"
-    connection = db()
-    connection.execute("DELETE FROM admin_login_codes WHERE user_id=?", (user_id,))
-    connection.execute("INSERT INTO admin_login_codes (user_id, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?)",
-                       (user_id, short_code_hash(code), email_code_expires_at(), utcnow()))
-    connection.commit()
-    if send_email(email, "ZooLand: код входа администратора", f"Код для входа в аккаунт администратора: {code}\n\nКод действует 15 минут. Никому его не сообщайте."):
-        return True
-    connection.execute("DELETE FROM admin_login_codes WHERE user_id=?", (user_id,))
-    connection.commit()
-    return False
 
 
 def password_error(password, *, name="", email=""):
@@ -3202,7 +3104,7 @@ def register():
                     """INSERT INTO users
                        (name, email, phone, password_hash, email_verified, created_at,
                         terms_accepted_at, terms_version, privacy_accepted_at, privacy_version)
-                       VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)""",
+                       VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)""",
                     (
                         name, email, phone, generate_password_hash(password), accepted_at,
                         accepted_at, TERMS_VERSION, accepted_at, PRIVACY_VERSION,
@@ -3215,22 +3117,21 @@ def register():
                 # проверкой и INSERT; детали схемы посетителю не раскрываем.
                 flash("Этот email или номер уже зарегистрирован. Войдите в аккаунт.", "error")
             else:
-                if not create_email_verification_code(cursor.lastrowid, email):
-                    db().execute("DELETE FROM users WHERE id=?", (cursor.lastrowid,)); db().commit()
-                    flash("Не удалось отправить код подтверждения. Попробуйте зарегистрироваться позже.", "error")
-                else:
-                    # Переносим гостевые объявления только после успешной отправки
-                    # кода, иначе сбой SMTP оставлял их у удалённого user_id.
-                    token = guest_token()
-                    if token:
-                        db().execute(
-                            "UPDATE animals SET user_id=?, guest_token=NULL WHERE guest_token=?",
-                            (cursor.lastrowid, token),
-                        )
-                        db().commit()
-                    session.clear()
-                    session["verify_user_id"] = cursor.lastrowid
-                    response = redirect(url_for("verify_email")); response.delete_cookie("zooland_guest"); return response
+                # Переносим гостевые объявления только после успешного создания
+                # аккаунта, иначе сбой оставлял бы их у удалённого user_id.
+                token = guest_token()
+                if token:
+                    db().execute(
+                        "UPDATE animals SET user_id=?, guest_token=NULL WHERE guest_token=?",
+                        (cursor.lastrowid, token),
+                    )
+                    db().commit()
+                session.clear()
+                session["user_id"] = cursor.lastrowid
+                session["session_version"] = 1
+                session.permanent = True
+                flash("Регистрация прошла успешно. Добро пожаловать в ZooLand.", "success")
+                response = redirect(url_for("account")); response.delete_cookie("zooland_guest"); return response
     return render_template("auth.html", mode="register")
 
 
@@ -3249,163 +3150,14 @@ def login():
         if len(email) <= MAX_EMAIL_LENGTH and len(password) <= MAX_PASSWORD_LENGTH:
             user = db().execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
         if user and check_password_hash(user["password_hash"], password):
-            if not user["email_verified"]:
-                session.clear()
-                session["verify_user_id"] = user["id"]
-                flash("Сначала подтвердите email кодом из письма.", "error")
-                return redirect(url_for("verify_email"))
-            if user["is_admin"]:
-                if not allow_sensitive_action("admin_2fa", str(user["id"])):
-                    flash("Слишком много запросов кода. Попробуйте позже.", "error")
-                    return redirect(url_for("login"))
-                if not create_admin_login_code(user["id"], user["email"]):
-                    flash("Не удалось отправить код администратора. Проверьте почтовые настройки.", "error")
-                    return redirect(url_for("login"))
-                session.clear()
-                session["admin_2fa_user_id"] = user["id"]
-                return redirect(url_for("verify_admin_login"))
             establish_authenticated_session(user)
             return redirect(url_for("account"))
         flash("Неверный email или пароль.", "error")
     return render_template("auth.html", mode="login")
 
 
-@app.route("/verify-email", methods=["GET", "POST"])
-def verify_email():
-    user_id = session.get("verify_user_id")
-    user = db().execute("SELECT id, email, is_admin, session_version FROM users WHERE id=?", (user_id,)).fetchone() if user_id else None
-    if not user:
-        flash("Начните регистрацию заново.", "error")
-        return redirect(url_for("register"))
-    if request.method == "POST":
-        code = re.sub(r"\D", "", request.form.get("code", ""))
-        row = db().execute("SELECT * FROM email_verification_codes WHERE user_id=? AND used_at IS NULL ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
-        if not row or row["expires_at"] <= utcnow() or row["attempts"] >= 5:
-            flash("Код истёк. Запросите новый.", "error")
-        elif not hmac.compare_digest(short_code_hash(code), row["code_hash"]):
-            db().execute("UPDATE email_verification_codes SET attempts=attempts+1 WHERE id=?", (row["id"],)); db().commit()
-            flash("Неверный код.", "error")
-        else:
-            db().execute("UPDATE email_verification_codes SET used_at=? WHERE id=?", (utcnow(), row["id"]))
-            db().execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
-            db().commit()
-            if user["is_admin"]:
-                if not create_admin_login_code(user["id"], user["email"]):
-                    flash("Email подтверждён, но код администратора не удалось отправить.", "error")
-                    return redirect(url_for("login"))
-                session.clear(); session["admin_2fa_user_id"] = user["id"]
-                return redirect(url_for("verify_admin_login"))
-            establish_authenticated_session(user)
-            flash("Email подтверждён.", "success")
-            return redirect(url_for("account"))
-    return render_template("verify_email.html", email=user["email"])
-
-
-@app.route("/verify-email/resend", methods=["POST"])
-def resend_verification_email():
-    user_id = session.get("verify_user_id")
-    user = db().execute("SELECT id, email FROM users WHERE id=? AND email_verified=0", (user_id,)).fetchone() if user_id else None
-    if not user:
-        return redirect(url_for("register"))
-    if not allow_sensitive_action("verify_resend", str(user["id"])):
-        flash("Слишком много запросов кода. Попробуйте позже.", "error")
-    elif create_email_verification_code(user["id"], user["email"]):
-        flash("Новый код отправлен.", "success")
-    else:
-        flash("Не удалось отправить код. Попробуйте позже.", "error")
-    return redirect(url_for("verify_email"))
-
-
-@app.route("/admin/verify-login", methods=["GET", "POST"])
-def verify_admin_login():
-    user_id = session.get("admin_2fa_user_id")
-    user = db().execute("SELECT id, email, is_admin, session_version FROM users WHERE id=?", (user_id,)).fetchone() if user_id else None
-    if not user or not user["is_admin"]:
-        session.pop("admin_2fa_user_id", None)
-        flash("Сначала войдите с email и паролем администратора.", "error")
-        return redirect(url_for("login"))
-    if request.method == "POST":
-        if not allow_sensitive_action("admin_2fa", str(user["id"])):
-            flash("Слишком много попыток. Запросите новый код позже.", "error")
-            return redirect(url_for("verify_admin_login"))
-        code = re.sub(r"\D", "", request.form.get("code", ""))
-        row = db().execute("SELECT * FROM admin_login_codes WHERE user_id=? AND used_at IS NULL ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
-        if not row or row["expires_at"] <= utcnow() or row["attempts"] >= 5:
-            flash("Код истёк. Запросите новый.", "error")
-        elif not hmac.compare_digest(short_code_hash(code), row["code_hash"]):
-            db().execute("UPDATE admin_login_codes SET attempts=attempts+1 WHERE id=?", (row["id"],))
-            db().commit()
-            flash("Неверный код.", "error")
-        else:
-            db().execute("UPDATE admin_login_codes SET used_at=? WHERE id=?", (utcnow(), row["id"]))
-            db().commit()
-            establish_authenticated_session(user)
-            flash("Двухэтапная проверка пройдена.", "success")
-            return redirect(url_for("account"))
-    return render_template("admin_2fa.html", email=user["email"])
-
-
-@app.route("/admin/verify-login/resend", methods=["POST"])
-def resend_admin_login_code():
-    user_id = session.get("admin_2fa_user_id")
-    user = db().execute("SELECT id, email, is_admin FROM users WHERE id=?", (user_id,)).fetchone() if user_id else None
-    if not user or not user["is_admin"]:
-        return redirect(url_for("login"))
-    if not allow_sensitive_action("admin_2fa", str(user["id"])):
-        flash("Слишком много запросов. Попробуйте позже.", "error")
-    elif create_admin_login_code(user["id"], user["email"]):
-        flash("Новый код отправлен на email администратора.", "success")
-    else:
-        flash("Не удалось отправить код. Проверьте почтовые настройки.", "error")
-    return redirect(url_for("verify_admin_login"))
-
-
-@app.route("/password/forgot", methods=["GET", "POST"])
-def forgot_password():
-    if request.method == "POST":
-        email = request.form.get("email", "").lower().strip()
-        user = (
-            db().execute("SELECT id, email FROM users WHERE email=?", (email,)).fetchone()
-            if len(email) <= MAX_EMAIL_LENGTH else None
-        )
-        sent = False
-        if allow_sensitive_action("password_reset", email) and user:
-            reset_url, token_hash = create_password_reset_link(user["id"])
-            sent = send_password_reset_email(user["email"], reset_url)
-            if not sent:
-                db().execute("DELETE FROM password_reset_tokens WHERE token_hash=?", (token_hash,))
-                db().commit()
-        # Один и тот же ответ не позволяет определить, зарегистрирован ли чужой email.
-        flash("Если этот email зарегистрирован, мы отправили ссылку для смены пароля.", "success")
-        return redirect(url_for("forgot_password"))
-    return render_template("forgot_password.html")
-
-
-@app.route("/password/reset/<token>", methods=["GET", "POST"])
-def reset_password(token):
-    token_hash = sha256(token.encode()).hexdigest()
-    reset = db().execute("""SELECT * FROM password_reset_tokens
-                          WHERE token_hash=? AND used_at IS NULL AND expires_at > ?""", (token_hash, utcnow())).fetchone()
-    if not reset:
-        flash("Ссылка недействительна или уже использована. Запросите новую.", "error")
-        return redirect(url_for("forgot_password"))
-    if request.method == "POST":
-        password = request.form.get("password", "")
-        confirm_password = request.form.get("confirm_password", "")
-        if error := password_error(password):
-            flash(error, "error")
-        elif password != confirm_password:
-            flash("Пароли не совпадают.", "error")
-        else:
-            db().execute("UPDATE users SET password_hash=?, session_version=session_version+1 WHERE id=?", (generate_password_hash(password), reset["user_id"]))
-            db().execute("UPDATE password_reset_tokens SET used_at=? WHERE user_id=?", (utcnow(), reset["user_id"]))
-            db().commit()
-            flash("Пароль изменён. Теперь войдите с новым паролем.", "success")
-            return redirect(url_for("login"))
-    return render_template("reset_password.html", token=token)
-
-
 SUPPORT_FORM_MIN_AGE_SECONDS = 3
+
 
 
 def is_support_bot_submission():
@@ -4222,8 +3974,7 @@ def account():
 @app.route("/settings")
 @login_required
 def settings():
-    pending_change = db().execute("SELECT new_email, expires_at FROM email_change_codes WHERE user_id=? AND used_at IS NULL ORDER BY id DESC LIMIT 1", (current_user()["id"],)).fetchone()
-    return render_template("settings.html", tab="settings", pending_email_change=pending_change)
+    return render_template("settings.html", tab="settings", pending_email_change=None)
 
 
 @app.route("/user/<int:user_id>")
@@ -4420,24 +4171,6 @@ def admin_users():
                           FROM users u ORDER BY u.id DESC""").fetchall()
     return render_template("admin_users.html", users=users)
 
-
-@app.route("/admin/users/<int:user_id>/password-reset", methods=["POST"])
-@admin_required
-def admin_send_password_reset(user_id):
-    user = db().execute("SELECT id, email FROM users WHERE id=?", (user_id,)).fetchone()
-    if not user:
-        abort(404)
-    if not allow_sensitive_action("password_reset", user["email"]):
-        flash("Слишком много ссылок восстановления. Попробуйте позже.", "error")
-        return redirect(url_for("admin_users"))
-    reset_url, token_hash = create_password_reset_link(user["id"])
-    if send_password_reset_email(user["email"], reset_url):
-        flash("Ссылка для восстановления пароля отправлена пользователю.", "success")
-    else:
-        db().execute("DELETE FROM password_reset_tokens WHERE token_hash=?", (token_hash,))
-        db().commit()
-        flash("Не удалось отправить письмо. Проверьте настройки почты поддержки.", "error")
-    return redirect(url_for("admin_users"))
 
 
 def admin_listing_rows(user_id=None, only_pending=False):
@@ -4770,51 +4503,21 @@ def settings_email():
         if (len(current_password) > MAX_PASSWORD_LENGTH or
                 not check_password_hash(secured_user["password_hash"], current_password)):
             flash("Введите текущий пароль, чтобы изменить email.", "error")
-        elif not allow_sensitive_action("verify_resend", str(user["id"])):
-            flash("Слишком много запросов кода. Попробуйте позже.", "error")
-        elif create_email_change_code(user["id"], email):
-            db().execute("UPDATE users SET pending_email=? WHERE id=?", (email, user["id"]))
-            db().commit()
-            send_email(user["email"], "ZooLand: запрос на смену email", f"Запрошена смена email аккаунта ZooLand на {email}. Если это не вы, немедленно смените пароль.")
-            flash("Код подтверждения отправлен на новый email.", "success")
-            return redirect(url_for("verify_email_change"))
         else:
-            flash("Не удалось отправить код. Попробуйте позже.", "error")
+            old_email = user["email"]
+            db().execute("UPDATE users SET email=?, session_version=session_version+1 WHERE id=?", (email, user["id"]))
+            db().commit()
+            send_email(old_email, "ZooLand: email изменён", f"Email вашего аккаунта ZooLand изменён на {email}. Если это были не вы, срочно обратитесь в поддержку.")
+            flash("Email изменён. Все другие сессии завершены.", "success")
     return redirect(url_for("settings"))
 
 
 @app.route("/settings/email/verify", methods=["GET", "POST"])
 @login_required
 def verify_email_change():
-    user = current_user()
-    row = db().execute("SELECT * FROM email_change_codes WHERE user_id=? AND used_at IS NULL ORDER BY id DESC LIMIT 1", (user["id"],)).fetchone()
-    if not row or row["expires_at"] <= utcnow() or row["attempts"] >= 5:
-        flash("Код смены email истёк. Запросите новый в настройках.", "error")
-        return redirect(url_for("settings"))
-    if request.method == "POST":
-        code = re.sub(r"\D", "", request.form.get("code", ""))
-        if not hmac.compare_digest(short_code_hash(code), row["code_hash"]):
-            db().execute("UPDATE email_change_codes SET attempts=attempts+1 WHERE id=?", (row["id"],))
-            db().commit()
-            flash("Неверный код.", "error")
-        elif db().execute("SELECT 1 FROM users WHERE email=? AND id!=?", (row["new_email"], user["id"])).fetchone():
-            flash("Этот email уже занят другим аккаунтом.", "error")
-        else:
-            old_email = user["email"]
-            try:
-                db().execute("UPDATE email_change_codes SET used_at=? WHERE id=?", (utcnow(), row["id"]))
-                db().execute("UPDATE users SET email=?, pending_email=NULL, email_verified=1, session_version=session_version+1 WHERE id=?", (row["new_email"], user["id"]))
-                db().commit()
-            except sqlite3.IntegrityError:
-                db().rollback()
-                flash("Этот email уже занят другим аккаунтом.", "error")
-                return redirect(url_for("settings"))
-            updated_user = db().execute("SELECT id, session_version FROM users WHERE id=?", (user["id"],)).fetchone()
-            establish_authenticated_session(updated_user)
-            send_email(old_email, "ZooLand: email изменён", f"Email вашего аккаунта ZooLand изменён на {row['new_email']}. Если это были не вы, срочно обратитесь в поддержку.")
-            flash("Новый email подтверждён. Все другие сессии завершены.", "success")
-            return redirect(url_for("settings"))
-    return render_template("verify_email_change.html", email=row["new_email"])
+    # Маршрут оставлен как заглушка: смена email теперь происходит без кода.
+    flash("Смена email теперь происходит без кода подтверждения — используйте форму в настройках.", "info")
+    return redirect(url_for("settings"))
 
 
 @app.route("/settings/phone", methods=["POST"])
